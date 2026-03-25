@@ -272,6 +272,16 @@ Last updated after the March 20 standup.
 
 These files accumulate over weeks and months. An `MEMORY.md` index file tracks them all. codeREM treats this directory as a living system that needs maintenance -- just like your brain does during sleep.
 
+## Ecosystem
+
+codeREM is part of a toolkit for people who build with Claude Code every day.
+
+| Project | What it does |
+|---------|-------------|
+| **[codeREM](https://github.com/drewbeyersdorf/codeREM)** | Memory consolidation. You are here. |
+| **[HotBunk](https://github.com/drewbeyersdorf/hotbunk)** | Cooperative compute -- pool idle Claude Max accounts into shared capacity |
+| **[prompt-poetry](https://github.com/drewbeyersdorf/prompt-poetry)** | Composable prompt engineering -- pipe transforms together like Unix commands |
+
 ## License
 
 MIT

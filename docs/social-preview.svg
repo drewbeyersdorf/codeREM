@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0a14" />
+      <stop offset="100%" style="stop-color:#0d0d2a" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="blur" />
+      <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+    </filter>
+  </defs>
+  <rect width="1280" height="640" fill="url(#bg)" />
+
+  <!-- EEG wave -->
+  <path d="M0 320 Q100 320 200 320 L250 320 Q300 320 350 280 Q400 240 450 320 Q470 360 500 320 L600 320 Q620 320 650 260 Q670 210 700 300 Q720 360 740 240 Q760 150 780 300 Q800 380 830 260 Q860 170 900 320 L1000 320 Q1050 320 1100 290 Q1150 260 1200 320 L1280 320" stroke="#6c5ce7" stroke-width="3" fill="none" opacity="0.3" filter="url(#glow)" />
+
+  <!-- Synapse nodes -->
+  <circle cx="450" cy="320" r="5" fill="#00ff88" opacity="0.8" filter="url(#glow)" />
+  <circle cx="700" cy="300" r="6" fill="#00ff88" opacity="0.9" filter="url(#glow)" />
+  <circle cx="780" cy="300" r="5" fill="#ffbe0b" opacity="0.7" filter="url(#glow)" />
+  <circle cx="900" cy="320" r="5" fill="#00ff88" opacity="0.8" filter="url(#glow)" />
+
+  <!-- Title -->
+  <text x="640" y="260" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="72" font-weight="700" fill="#a29bfe" filter="url(#glow)">codeREM</text>
+
+  <!-- Tagline -->
+  <text x="640" y="420" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="24" fill="#8b949e" letter-spacing="3">Memory consolidation for Claude Code</text>
+
+  <!-- Subtitle -->
+  <text x="640" y="470" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="16" fill="#4a4a68" letter-spacing="2">Three phases. Nightly automation. Like REM sleep for your agent's brain.</text>
+
+  <!-- Phase indicators -->
+  <text x="440" y="560" text-anchor="middle" font-family="monospace" font-size="14" fill="#6c5ce7">P1 surface</text>
+  <text x="640" y="560" text-anchor="middle" font-family="monospace" font-size="14" fill="#a29bfe">P2 structural</text>
+  <text x="840" y="560" text-anchor="middle" font-family="monospace" font-size="14" fill="#6c5ce7">P3 semantic</text>
+
+  <circle cx="380" cy="556" r="4" fill="#00ff88" opacity="0.8" />
+  <text x="392" y="560" font-family="monospace" font-size="11" fill="#8b949e">fixed</text>
+  <circle cx="890" cy="556" r="4" fill="#ffbe0b" opacity="0.7" />
+  <text x="902" y="560" font-family="monospace" font-size="11" fill="#8b949e">flagged</text>
+</svg>

@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>codeREM - Memory Consolidation for Claude Code</title>
+<meta name="description" content="Your AI agent's memory decays every day. codeREM consolidates it while you sleep. Three-phase analysis, nightly automation, zero effort.">
+<meta property="og:title" content="codeREM - Memory Consolidation for Claude Code">
+<meta property="og:description" content="Your AI agent's memory decays every day. codeREM consolidates it while you sleep.">
+<meta property="og:image" content="https://drewbeyersdorf.github.io/codeREM/social-preview.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0a14;
+  --bg-raised: #0f0f20;
+  --bg-terminal: #070710;
+  --text: #c5c5dc;
+  --text-bright: #e6e6f3;
+  --dim: #4a4a68;
+  --purple: #a29bfe;
+  --purple-bright: #6c5ce7;
+  --purple-dim: rgba(162, 155, 254, 0.12);
+  --purple-glow: rgba(108, 92, 231, 0.4);
+  --green: #00ff88;
+  --amber: #ffbe0b;
+  --red: #ff6b6b;
+  --blue: #74b9ff;
+  --border: #1a1a32;
+  --grid: rgba(108, 92, 231, 0.03);
+  --font: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', Consolas, monospace;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; font-size: 16px; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  line-height: 1.6;
+  overflow-x: hidden;
+  padding-top: 3rem;
+}
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 60px 60px;
+  pointer-events: none;
+  z-index: -1;
+}
+.container { max-width: 900px; margin: 0 auto; padding: 0 2rem; }
+.glow { text-shadow: 0 0 20px var(--purple-glow), 0 0 40px var(--purple-glow); }
+.hl { color: var(--purple); }
+
+/* Nav */
+nav {
+  position: fixed; top: 0; left: 0; right: 0;
+  background: rgba(10, 10, 20, 0.92);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  z-index: 100;
+  padding: 0.6rem 0;
+}
+nav .container { display: flex; justify-content: space-between; align-items: center; }
+nav .logo { color: var(--purple); font-weight: 700; font-size: 1rem; letter-spacing: 2px; }
+nav .links { display: flex; gap: 1.2rem; }
+nav .links a { color: var(--dim); text-decoration: none; font-size: 0.7rem; letter-spacing: 1px; text-transform: uppercase; transition: color 0.2s; }
+nav .links a:hover { color: var(--purple); }
+
+/* Sections */
+section { padding: 5rem 0; position: relative; }
+h2 { font-size: 1.4rem; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 2rem; color: var(--text-bright); }
+
+/* Hero */
+.hero { text-align: center; padding: 8rem 0 6rem; position: relative; overflow: hidden; }
+.hero h1 { font-size: 3.5rem; letter-spacing: 8px; color: var(--purple); font-weight: 700; }
+.hero-sub { color: var(--text); font-size: 1rem; margin: 1rem auto; max-width: 600px; line-height: 1.8; }
+
+/* EEG wave animation */
+.eeg-container {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none; overflow: hidden; opacity: 0.15;
+}
+.eeg-line {
+  position: absolute; top: 50%; width: 200%;
+  animation: eeg-scroll 12s linear infinite;
+}
+@keyframes eeg-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+/* Install box */
+.install-box {
+  display: inline-flex; align-items: center; gap: 0.8rem;
+  background: var(--bg-terminal); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.8rem 1.2rem; margin: 1.5rem 0;
+  font-size: 0.9rem;
+}
+.install-box .prompt { color: var(--purple); }
+.copy-btn {
+  background: var(--purple-dim); color: var(--purple); border: 1px solid var(--border);
+  border-radius: 4px; padding: 0.2rem 0.5rem; cursor: pointer; font-family: var(--font);
+  font-size: 0.7rem; transition: all 0.2s;
+}
+.copy-btn:hover { background: var(--purple-bright); color: white; }
+.hero-badges { display: flex; gap: 1rem; justify-content: center; margin-top: 1rem; }
+.hero-badges a {
+  color: var(--dim); text-decoration: none; font-size: 0.75rem;
+  letter-spacing: 1px; text-transform: uppercase;
+  padding: 0.3rem 0.8rem; border: 1px solid var(--border); border-radius: 4px;
+  transition: all 0.2s;
+}
+.hero-badges a:hover { color: var(--purple); border-color: var(--purple); }
+
+/* Phase cards */
+.phase-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; margin: 2rem 0; }
+.phase-card {
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: 8px; padding: 1.5rem; position: relative;
+  transition: all 0.3s;
+}
+.phase-card:hover { border-color: var(--purple-bright); transform: translateY(-2px); }
+.phase-card .phase-num {
+  position: absolute; top: -12px; left: 16px;
+  background: var(--purple-bright); color: white;
+  font-size: 0.65rem; font-weight: 700; padding: 2px 8px;
+  border-radius: 10px; letter-spacing: 1px;
+}
+.phase-card h3 { font-size: 0.9rem; color: var(--text-bright); margin-bottom: 0.8rem; margin-top: 0.5rem; }
+.phase-card ul { list-style: none; font-size: 0.75rem; color: var(--dim); }
+.phase-card ul li { margin-bottom: 0.4rem; }
+.phase-card ul li::before { content: '> '; color: var(--purple); }
+
+/* Problem section */
+.decay-visual {
+  background: var(--bg-terminal); border: 1px solid var(--border);
+  border-radius: 8px; padding: 1.5rem; margin: 2rem 0;
+  font-size: 0.8rem; line-height: 2;
+}
+.decay-visual .week { display: flex; align-items: center; gap: 1rem; }
+.decay-visual .label { color: var(--dim); min-width: 100px; }
+.decay-visual .bar { height: 6px; border-radius: 3px; transition: all 0.5s; }
+
+/* Terminal demo */
+.terminal {
+  background: var(--bg-terminal); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden; margin: 2rem 0;
+}
+.terminal-header {
+  display: flex; gap: 6px; padding: 12px 16px;
+  background: rgba(15, 15, 32, 0.8); border-bottom: 1px solid var(--border);
+}
+.terminal-dot { width: 10px; height: 10px; border-radius: 50%; }
+.terminal-dot.red { background: #ff5f58; }
+.terminal-dot.yellow { background: #ffbd2e; }
+.terminal-dot.green { background: #18c132; }
+.terminal-body { padding: 1rem 1.2rem; font-size: 0.75rem; line-height: 1.8; overflow-x: auto; }
+.terminal-body .cmd { color: var(--text-bright); }
+.terminal-body .prompt-char { color: var(--purple); }
+.terminal-body .fix { color: var(--green); }
+.terminal-body .flag { color: var(--amber); }
+.terminal-body .phase-label { color: var(--purple); font-weight: 700; }
+.terminal-body .muted { color: var(--dim); }
+.terminal-body .number { color: var(--purple-bright); font-weight: 700; }
+
+/* Output section */
+.output-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.5rem; margin: 2rem 0; }
+.output-card {
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: 8px; padding: 1.5rem;
+}
+.output-card h3 { font-size: 0.85rem; color: var(--purple); margin-bottom: 0.5rem; }
+.output-card p { font-size: 0.75rem; color: var(--dim); }
+
+/* Architecture */
+.arch-diagram {
+  background: var(--bg-terminal); border: 1px solid var(--border);
+  border-radius: 8px; padding: 2rem; margin: 2rem 0;
+  font-size: 0.7rem; line-height: 1.6; text-align: center;
+  white-space: pre; overflow-x: auto; color: var(--dim);
+}
+.arch-diagram .highlight { color: var(--purple); }
+
+/* Ecosystem */
+.eco-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; margin: 2rem 0; }
+.eco-card {
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: 8px; padding: 1.5rem; text-decoration: none; color: inherit;
+  transition: all 0.3s;
+}
+.eco-card:hover { border-color: var(--purple-bright); transform: translateY(-2px); }
+.eco-card h3 { font-size: 0.9rem; color: var(--text-bright); margin-bottom: 0.5rem; }
+.eco-card p { font-size: 0.72rem; color: var(--dim); }
+.eco-card .tag { display: inline-block; font-size: 0.6rem; color: var(--purple); background: var(--purple-dim); padding: 2px 6px; border-radius: 3px; margin-top: 0.5rem; }
+
+/* Footer */
+footer { text-align: center; padding: 3rem 0 2rem; color: var(--dim); font-size: 0.7rem; }
+footer a { color: var(--purple); text-decoration: none; }
+
+/* Scroll reveal */
+.reveal { opacity: 0; transform: translateY(20px); transition: all 0.6s ease-out; }
+.reveal.visible { opacity: 1; transform: translateY(0); }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .hero { padding: 6rem 0 4rem; }
+  .hero h1 { font-size: 2.5rem; letter-spacing: 4px; }
+  .phase-grid { grid-template-columns: 1fr; }
+  .output-grid { grid-template-columns: 1fr; }
+  .eco-grid { grid-template-columns: 1fr; }
+  nav .links { gap: 0.6rem; font-size: 0.6rem; }
+  section { padding: 3.5rem 0; }
+}
+@media (max-width: 480px) {
+  .hero h1 { letter-spacing: 2px; }
+  nav .links { display: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav>
+  <div class="container">
+    <span class="logo">codeREM</span>
+    <div class="links">
+      <a href="#problem">Problem</a>
+      <a href="#phases">Phases</a>
+      <a href="#demo">CLI</a>
+      <a href="#output">Output</a>
+      <a href="#ecosystem">Ecosystem</a>
+      <a href="https://github.com/drewbeyersdorf/codeREM">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="eeg-container">
+    <svg class="eeg-line" viewBox="0 0 2000 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M0 100 Q50 100 100 100 L150 100 Q175 100 200 80 Q225 60 250 100 Q260 120 280 100 L350 100 Q375 100 400 70 Q425 40 450 100 Q460 130 480 100 L550 100 Q560 100 580 60 Q590 30 600 80 Q610 120 620 50 Q630 10 640 80 Q650 120 665 70 Q680 30 700 100 Q710 120 730 60 Q740 30 760 90 Q770 120 790 60 Q800 20 820 100 L900 100 Q920 100 940 85 Q960 70 980 100 L1000 100 Q1050 100 1100 100 L1150 100 Q1175 100 1200 80 Q1225 60 1250 100 Q1260 120 1280 100 L1350 100 Q1375 100 1400 70 Q1425 40 1450 100 Q1460 130 1480 100 L1550 100 Q1560 100 1580 60 Q1590 30 1600 80 Q1610 120 1620 50 Q1630 10 1640 80 Q1650 120 1665 70 Q1680 30 1700 100 Q1710 120 1730 60 Q1740 30 1760 90 Q1770 120 1790 60 Q1800 20 1820 100 L1900 100 Q1920 100 1940 85 Q1960 70 1980 100 L2000 100" stroke="#6c5ce7" stroke-width="2" fill="none"/>
+    </svg>
+  </div>
+  <div class="container" style="position: relative; z-index: 1;">
+    <h1 class="glow">codeREM</h1>
+    <p style="color: var(--dim); font-size: 0.9rem; letter-spacing: 3px; margin-top: -0.5rem; margin-bottom: 1.5rem; text-transform: uppercase;">memory consolidation while you sleep</p>
+    <p class="hero-sub">Your AI agent's memory decays every day. Dead links, stale facts, broken references. codeREM runs three phases of analysis on your Claude Code memory files and fixes what it finds. Every night. Automatically.</p>
+    <div class="install-box">
+      <span class="prompt">$</span>
+      <span>git clone https://github.com/drewbeyersdorf/codeREM && cd codeREM && bash install.sh</span>
+      <button class="copy-btn" onclick="copyText('git clone https://github.com/drewbeyersdorf/codeREM && cd codeREM && bash install.sh', this)">copy</button>
+    </div>
+    <div class="hero-badges">
+      <a href="https://github.com/drewbeyersdorf/codeREM">GitHub</a>
+      <a href="#demo">See it run</a>
+      <a href="https://github.com/drewbeyersdorf/codeREM/blob/main/examples/dream-journal-2026-03-24.md">Example output</a>
+    </div>
+    <p style="color: var(--dim); font-size: 0.8rem; margin-top: 1rem;">Built by <a href="https://github.com/drewbeyersdorf" style="color: var(--purple); text-decoration: none;">Drew Beyersdorf</a></p>
+  </div>
+</section>
+
+<!-- Problem -->
+<section id="problem">
+  <div class="container">
+    <h2><span class="hl">//</span> the problem</h2>
+    <p class="reveal" style="font-size: 0.85rem; max-width: 700px; margin-bottom: 2rem;">Claude Code stores persistent memory in markdown files. These files accumulate silently. After a few weeks, your agent is making decisions based on information that's no longer true.</p>
+    <div class="decay-visual reveal">
+      <div class="week">
+        <span class="label" style="color: var(--green);">Week 1</span>
+        <div class="bar" style="width: 95%; background: var(--green);"></div>
+        <span style="color: var(--dim); font-size: 0.7rem;">98% accurate</span>
+      </div>
+      <div class="week">
+        <span class="label" style="color: var(--green);">Week 2</span>
+        <div class="bar" style="width: 82%; background: var(--green);"></div>
+        <span style="color: var(--dim); font-size: 0.7rem;">85% accurate</span>
+      </div>
+      <div class="week">
+        <span class="label" style="color: var(--amber);">Week 4</span>
+        <div class="bar" style="width: 60%; background: var(--amber);"></div>
+        <span style="color: var(--dim); font-size: 0.7rem;">62% accurate</span>
+      </div>
+      <div class="week">
+        <span class="label" style="color: var(--red);">Week 8</span>
+        <div class="bar" style="width: 35%; background: var(--red);"></div>
+        <span style="color: var(--dim); font-size: 0.7rem;">38% accurate</span>
+      </div>
+    </div>
+    <p class="reveal" style="font-size: 0.75rem; color: var(--dim);">Dead file paths. Dates that say "last Thursday" from six weeks ago. Two files that contradict each other. Your agent doesn't know -- it trusts everything equally.</p>
+  </div>
+</section>
+
+<!-- Phases -->
+<section id="phases">
+  <div class="container">
+    <h2><span class="hl">//</span> the three phases</h2>
+    <p class="reveal" style="font-size: 0.85rem; max-width: 700px; margin-bottom: 2rem;">During REM sleep, your brain replays the day's experiences, strengthens useful connections, and prunes what doesn't matter. codeREM does the same thing.</p>
+    <div class="phase-grid">
+      <div class="phase-card reveal">
+        <span class="phase-num">PHASE 1</span>
+        <h3>Surface Cleanup</h3>
+        <ul>
+          <li>Dead path detection</li>
+          <li>Relative date conversion</li>
+          <li>Frontmatter normalization</li>
+          <li>Duplicate detection</li>
+          <li>Trailing whitespace</li>
+        </ul>
+      </div>
+      <div class="phase-card reveal">
+        <span class="phase-num">PHASE 2</span>
+        <h3>Structural Integrity</h3>
+        <ul>
+          <li>Cross-reference validation</li>
+          <li>Pointer file verification</li>
+          <li>Index consistency</li>
+          <li>Canonical source alignment</li>
+          <li>Orphan file detection</li>
+        </ul>
+      </div>
+      <div class="phase-card reveal">
+        <span class="phase-num">PHASE 3</span>
+        <h3>Semantic Verification</h3>
+        <ul>
+          <li>Fact vs. current state</li>
+          <li>Contradiction detection</li>
+          <li>Staleness scoring</li>
+          <li>Temporal coherence</li>
+          <li>Recommended deletions</li>
+        </ul>
+      </div>
+    </div>
+    <p class="reveal" style="font-size: 0.75rem; color: var(--dim);">Each phase gets progressively deeper. Phase 1 fixes what it can automatically. Phase 2 checks structure. Phase 3 only flags -- it never auto-edits at semantic depth. Every change is git-committed so you can diff or rollback.</p>
+  </div>
+</section>
+
+<!-- CLI Demo -->
+<section id="demo">
+  <div class="container">
+    <h2><span class="hl">//</span> the cli</h2>
+    <div class="terminal reveal">
+      <div class="terminal-header">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+      </div>
+      <div class="terminal-body">
+<span class="prompt-char">$</span> <span class="cmd">deep-dream</span>
+
+  <span class="muted">deep-dream -- memory consolidation agent</span>
+  <span class="muted">=========================================</span>
+
+<span class="phase-label">=== Phase 1: Surface Cleanup ===</span>
+
+<span class="muted">[03:00:12] Starting phase 1...</span>
+<span class="muted">[03:00:14] Prompt assembled (195KB). Calling Claude (sonnet)...</span>
+<span class="muted">[03:08:41] Claude returned 12 actions.</span>
+  <span class="fix">FIXED</span> api-migration.md: convert "last Thursday" to "2026-03-20"
+  <span class="fix">FIXED</span> infrastructure.md: remove dead path ~/projects/old-auth-service/
+  <span class="fix">FIXED</span> vendors.md: update contract value from $20K to $12K (renegotiated)
+  <span class="flag">FLAG [warning]</span> competitors.md: market analysis 24 days stale
+<span class="muted">[03:08:42] Phase 1 complete.</span> <span class="number">10 fixes</span><span class="muted">,</span> <span class="number">2 flags</span>
+
+<span class="phase-label">=== Phase 2: Structural Integrity ===</span>
+
+<span class="muted">[03:08:43] Starting phase 2...</span>
+  <span class="fix">FIXED</span> MEMORY.md: add missing pointer for metrics.md
+  <span class="flag">FLAG [error]</span> architecture.md: canonical source has diverged
+<span class="muted">[03:18:02] Phase 2 complete.</span> <span class="number">4 fixes</span><span class="muted">,</span> <span class="number">3 flags</span>
+
+<span class="phase-label">=== Phase 3: Semantic Verification ===</span>
+
+<span class="muted">[03:18:03] Starting phase 3...</span>
+  <span class="flag">FLAG [warning]</span> metrics.md: claims 3.2% but dashboard shows 2.8%
+  <span class="flag">FLAG [info]</span> strategy.md: growth plan references Q1 but Q1 ended
+<span class="muted">[03:28:13] Phase 3 complete.</span> <span class="number">0 fixes</span><span class="muted">,</span> <span class="number">5 flags</span>
+
+  <span class="muted">=========================================</span>
+  <span class="phase-label">Deep Dream Complete</span>
+  <span class="muted">=========================================</span>
+  Fixes applied: <span class="number">14</span>
+  Items flagged: <span class="number">10</span>
+  Journal: <span class="muted">memory-backups/dream-journal-2026-03-25.md</span>
+  <span class="muted">=========================================</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Output -->
+<section id="output">
+  <div class="container">
+    <h2><span class="hl">//</span> what it produces</h2>
+    <div class="output-grid">
+      <div class="output-card reveal">
+        <h3>Dream Journal</h3>
+        <p>Timestamped log of every fix, flag, and skip across all three phases. Your audit trail. See exactly what changed and why.</p>
+      </div>
+      <div class="output-card reveal">
+        <h3>Git History</h3>
+        <p>One commit per phase. Diff any run, rollback any change. Your memory directory becomes a versioned system, not a pile of files.</p>
+      </div>
+      <div class="output-card reveal">
+        <h3>Chronicle Episodes</h3>
+        <p>Autobiographical short stories generated from the day's findings. Llama writes outlines, Claude writes prose. A book, one episode per night.</p>
+      </div>
+      <div class="output-card reveal">
+        <h3>Illustrations</h3>
+        <p>SDXL Turbo on a local GPU. 0.3 seconds per image. Five art styles from Silverstein to stencil. Zero cost after hardware.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 5 Tools -->
+<section id="tools">
+  <div class="container">
+    <h2><span class="hl">//</span> five tools</h2>
+    <div class="decay-visual reveal" style="line-height: 2.2;">
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.3rem 0; border-bottom: 1px solid var(--border);">
+        <span style="color: var(--purple);">deep-dream</span>
+        <span style="color: var(--dim); font-size: 0.7rem;">3-phase memory consolidation engine</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.3rem 0; border-bottom: 1px solid var(--border);">
+        <span style="color: var(--purple);">chronicle-writer</span>
+        <span style="color: var(--dim); font-size: 0.7rem;">two-model writing pipeline (Llama + Claude)</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.3rem 0; border-bottom: 1px solid var(--border);">
+        <span style="color: var(--purple);">chronicle-render</span>
+        <span style="color: var(--dim); font-size: 0.7rem;">scene extraction + illustration generation</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.3rem 0; border-bottom: 1px solid var(--border);">
+        <span style="color: var(--purple);">render-image</span>
+        <span style="color: var(--dim); font-size: 0.7rem;">SDXL Turbo, 0.3s per image, 5 art styles</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.3rem 0;">
+        <span style="color: var(--purple);">nightly-dream</span>
+        <span style="color: var(--dim); font-size: 0.7rem;">systemd timer, 3 AM, fully automated</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Ecosystem -->
+<section id="ecosystem">
+  <div class="container">
+    <h2><span class="hl">//</span> the ecosystem</h2>
+    <p class="reveal" style="font-size: 0.85rem; max-width: 700px; margin-bottom: 2rem;">codeREM is part of a toolkit for people who build with Claude Code every day.</p>
+    <div class="eco-grid">
+      <a href="https://github.com/drewbeyersdorf/codeREM" class="eco-card reveal">
+        <h3>codeREM</h3>
+        <p>Memory consolidation. Three-phase analysis. Nightly automation. Like REM sleep for your agent's brain.</p>
+        <span class="tag">you are here</span>
+      </a>
+      <a href="https://github.com/drewbeyersdorf/hotbunk" class="eco-card reveal">
+        <h3>HotBunk</h3>
+        <p>Cooperative compute orchestrator. Pool idle Claude Max accounts. 150x cheaper than API tokens.</p>
+        <span class="tag">load balancing</span>
+      </a>
+      <a href="https://github.com/drewbeyersdorf/prompt-poetry" class="eco-card reveal">
+        <h3>prompt-poetry</h3>
+        <p>Composable prompt engineering. Pipe transforms together like Unix commands. Battle-tested across 21 agents.</p>
+        <span class="tag">prompt engineering</span>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <p>codeREM is open source under <a href="https://github.com/drewbeyersdorf/codeREM/blob/main/LICENSE">MIT</a></p>
+    <p style="margin-top: 0.5rem;"><a href="https://github.com/drewbeyersdorf">GitHub</a> &middot; <a href="https://linkedin.com/in/drewbeyersdorf">LinkedIn</a></p>
+  </div>
+</footer>
+
+<script>
+function copyText(text, btn) {
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'copied';
+    setTimeout(() => btn.textContent = 'copy', 2000);
+  });
+}
+
+// Scroll reveal
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+}, { threshold: 0.1 });
+document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+// Animate decay bars on scroll
+const decayObserver = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      e.target.querySelectorAll('.bar').forEach((bar, i) => {
+        bar.style.transitionDelay = `${i * 0.2}s`;
+      });
+    }
+  });
+}, { threshold: 0.3 });
+document.querySelectorAll('.decay-visual').forEach(el => decayObserver.observe(el));
+</script>
+</body>
+</html>
