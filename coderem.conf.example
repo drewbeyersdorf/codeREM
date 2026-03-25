@@ -1,0 +1,39 @@
+# codeREM configuration
+# Copy to ~/.config/coderem/coderem.conf and customize
+
+# Where Claude Code stores your memory files
+# Default: $HOME/.claude/projects/-home-$(whoami)/memory
+MEMORY_DIR="$HOME/.claude/projects/-home-$(whoami)/memory"
+
+# Where to store dream journals and backups
+# Default: same as MEMORY_DIR but with -backups suffix
+BACKUP_DIR="$HOME/.claude/projects/-home-$(whoami)/memory-backups"
+
+# Claude model to use for consolidation
+# Options: sonnet, opus, haiku
+MODEL="sonnet"
+
+# --- Chronicle Writer (optional) ---
+
+# Where to store generated episodes
+CHRONICLES_DIR="$HOME/chronicles"
+
+# SSH hostname for the GPU machine running Ollama
+# Set to "localhost" if running locally
+GPU_HOST="localhost"
+
+# Ollama model for outline generation
+OLLAMA_MODEL="qwen2.5:72b-instruct-q8_0"
+
+# Claude model for prose refinement
+CHRONICLE_MODEL="sonnet"
+
+# --- Render Image (optional) ---
+
+# SSH hostname for the GPU machine running SDXL
+# Set to "localhost" if running locally
+RENDER_HOST="localhost"
+
+# Default art style
+# Options: silverstein, banksy, sketch, terminal, diagram
+DEFAULT_STYLE="silverstein"

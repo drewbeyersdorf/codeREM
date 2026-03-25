@@ -1,0 +1,8 @@
+*.pyc
+__pycache__/
+*.cast
+*.log
+.env
+memory-backups/
+.draft-*
+/tmp/

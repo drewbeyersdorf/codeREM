@@ -37,22 +37,23 @@ Each phase calls Claude with a structured prompt, gets back JSON actions (fix/fl
 ## Quick Start
 
 ```bash
-# Clone and symlink
+# Clone and install
 git clone https://github.com/drewbeyersdorf/codeREM.git
 cd codeREM
-chmod +x deep-dream chronicle-writer chronicle-render render-image nightly-dream
-ln -s "$(pwd)/deep-dream" ~/.local/bin/deep-dream
-ln -s "$(pwd)/nightly-dream" ~/.local/bin/nightly-dream
+bash install.sh
+
+# See what it would fix (changes nothing)
+deep-dream --dry-run
 
 # Run all three phases
 deep-dream
 
-# Run just surface cleanup
-deep-dream --surface
-
-# Dry run (see what would change, change nothing)
-deep-dream --dry-run
+# Run nightly at 3 AM
+cp systemd/*.service systemd/*.timer ~/.config/systemd/user/
+systemctl --user enable --now nightly-dream.timer
 ```
+
+The installer symlinks all 5 tools to `~/.local/bin/`, creates a config at `~/.config/coderem/coderem.conf`, and checks your dependencies. Edit the config to point at your memory directory.
 
 ## CLI
 
@@ -147,7 +148,7 @@ chronicle-render --list-styles
 
 ### `nightly-dream` -- scheduled automation
 
-Systemd timer that runs at 3 AM every night. All three dream phases, then generates one chronicle episode, rotating through sections by day of year.
+Systemd timer that runs at 3 AM every night. All three dream phases, then generates one chronicle episode, rotating through sections by day of year. See [`systemd/README.md`](systemd/README.md) for setup.
 
 ```bash
 # Check timer status
@@ -157,7 +158,7 @@ systemctl --user status nightly-dream.timer
 nightly-dream
 
 # View last night's log
-cat ~/.claude/projects/-home-drew/memory-backups/nightly-dream-$(date +%Y-%m-%d).log
+cat ~/.config/coderem/logs/nightly-dream-$(date +%Y-%m-%d).log
 ```
 
 ## Architecture
@@ -205,25 +206,71 @@ Every night, codeREM generates:
 
 The dream journal is your audit trail. The git history is your undo button. The chronicles are the creative output -- a book being written one episode per night, entirely from what the memory system learned that day.
 
+## Example Output
+
+See [`examples/dream-journal-2026-03-24.md`](examples/dream-journal-2026-03-24.md) for a full dream journal from a real run -- 19 fixes applied, 13 items flagged across 98 memory files in 36 minutes.
+
+## Configuration
+
+After running `install.sh`, edit `~/.config/coderem/coderem.conf`:
+
+```bash
+# Point at your Claude Code memory files
+MEMORY_DIR="$HOME/.claude/projects/-home-$(whoami)/memory"
+
+# Choose your model (sonnet is fast, opus is thorough)
+MODEL="sonnet"
+
+# GPU host for chronicle-writer and render-image (optional)
+GPU_HOST="localhost"
+```
+
+See [`coderem.conf.example`](coderem.conf.example) for all options.
+
 ## Requirements
 
+**Core (deep-dream only):**
 - Claude Code CLI (`claude`) installed and authenticated
-- `jq` for JSON parsing
-- Python 3.12+ (for prompt assembly and image generation)
-- GPU with CUDA support (for render-image and chronicle-render)
-- Ollama running locally or on a remote machine (for chronicle-writer)
+- `jq`
+- Python 3.12+
+- Bash 5+
+
+**Optional (chronicle + render tools):**
+- GPU with CUDA support
+- Ollama with a 70B+ model
+- Python `diffusers` and `torch` packages
+
+The core consolidation engine has zero dependencies beyond Claude Code itself. The chronicle and render tools are optional creative extensions.
 
 ## Tech Stack
 
 | Component | Technology |
 |-----------|-----------|
 | Consolidation engine | Bash + Claude CLI |
-| Structured output | Claude `--json-schema` |
-| Outline generation | Ollama (Qwen 72B) |
+| Structured output | Claude `--json-schema` + `--output-format json` |
+| Outline generation | Ollama (any model, default Qwen 72B) |
 | Prose writing | Claude (Sonnet) |
 | Image generation | SDXL Turbo via diffusers |
 | Scheduling | systemd timers |
 | Version control | Git (per-phase commits) |
+| Config | Plain text conf file |
+
+## How Claude Code Memory Works
+
+Claude Code persists information between conversations in markdown files with YAML frontmatter:
+
+```markdown
+---
+name: project-status
+description: Current state of the billing migration
+type: project
+---
+
+Migration is 80% complete. Remaining: webhook handlers and the retry queue.
+Last updated after the March 20 standup.
+```
+
+These files accumulate over weeks and months. An `MEMORY.md` index file tracks them all. codeREM treats this directory as a living system that needs maintenance -- just like your brain does during sleep.
 
 ## License
 
