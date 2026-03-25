@@ -47,7 +47,7 @@ Every memory file should have YAML frontmatter with these fields:
 - `description`: one-line description (used to decide relevance in future conversations)
 - `type`: one of `user`, `feedback`, `project`, `reference`
 
-If frontmatter is missing entirely, generate a "fix" action that ADDS frontmatter to the top of the file. The old_text should be the first line of the file, and new_text should be the frontmatter block followed by that first line. Infer name from filename, description from content, and type from content/naming convention (feedback_* = feedback, principle_* = reference, project descriptions = project, pointer files to vault = reference, info about Drew = user). MEMORY.md is an index file and should be SKIPPED -- do not add frontmatter to it.
+If frontmatter is missing entirely, generate a "fix" action that ADDS frontmatter to the top of the file. The old_text should be the first line of the file, and new_text should be the frontmatter block followed by that first line. Infer name from filename, description from content, and type from content/naming convention (feedback_* = feedback, principle_* = reference, project descriptions = project, pointer files to vault = reference, info about the user personally = user). MEMORY.md is an index file and should be SKIPPED -- do not add frontmatter to it.
 
 If frontmatter exists but is missing fields, generate a fix that adds the missing fields based on the file's content.
 

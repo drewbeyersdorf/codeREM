@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # chronicle-writer -- two-model pipeline for "Days of Your Life"
-# Llama (charlie GPU) generates rough drafts, Claude refines into Drew's voice
+# Llama (remote GPU) generates rough drafts, Claude refines into prose
 #
 # Usage:
 #   chronicle-writer <findings-file>              # write episodes from findings
@@ -15,7 +15,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 CHRONICLES_DIR="$HOME/vault/projects/chronicles"
 FINDINGS_DIR="$HOME/vault/projects"
-CHARLIE="charlie"
+GPU_HOST="${GPU_HOST:-localhost}"
 OLLAMA_MODEL="qwen2.5:72b-instruct-q8_0"
 CLAUDE_MODEL="sonnet"
 DRY_RUN=false
@@ -87,18 +87,18 @@ echo "  chronicle-writer -- Days of Your Life"
 echo "  ======================================"
 echo "  Findings: ${FINDINGS_FILE:-"(none, refine mode)"}"
 echo "  Section:  ${SECTION:-"(all)"}"
-echo "  Ollama:   $OLLAMA_MODEL on $CHARLIE"
+echo "  Ollama:   $OLLAMA_MODEL on $GPU_HOST"
 echo "  Claude:   $CLAUDE_MODEL"
 echo "  Mode:     $(if $DRY_RUN; then echo "dry-run"; elif $LLAMA_ONLY; then echo "llama-only"; elif $CLAUDE_ONLY; then echo "claude-only"; else echo "full pipeline"; fi)"
 echo ""
 
 # --- Verify connectivity ---
 if [[ "$CLAUDE_ONLY" != true ]]; then
-  if ! ssh -o ConnectTimeout=5 "$CHARLIE" "ollama list" &>/dev/null; then
-    echo "ERROR: Cannot connect to $CHARLIE or Ollama not running" >&2
+  if ! ssh -o ConnectTimeout=5 "$GPU_HOST" "ollama list" &>/dev/null; then
+    echo "ERROR: Cannot connect to $GPU_HOST or Ollama not running" >&2
     exit 1
   fi
-  echo "[$(date +%H:%M:%S)] Connected to $CHARLIE, Ollama running."
+  echo "[$(date +%H:%M:%S)] Connected to $GPU_HOST, Ollama running."
 fi
 
 # --- Load context ---
@@ -139,7 +139,7 @@ next_episode_number() {
   printf "%03d" $((max + 1))
 }
 
-# --- Phase 1: Llama generates rough drafts on charlie ---
+# --- Phase 1: Llama generates rough drafts on the GPU host ---
 generate_rough_draft() {
   local findings="$1"
   local style_guide="$2"
@@ -199,13 +199,13 @@ CRITICAL RULES:
 - Do NOT invent characters. Do NOT fabricate events.
 - Output valid JSON only. Nothing else."
 
-  # Send to Ollama on charlie via API
-  # Build JSON payload locally, scp to charlie, curl from there
+  # Send to Ollama on the GPU host via API
+  # Build JSON payload locally, scp to the GPU host, curl from there
   local tmpfile
   tmpfile="$(mktemp /tmp/chronicle-prompt-XXXXXX.txt)"
   echo "$prompt" > "$tmpfile"
 
-  echo "[$(date +%H:%M:%S)] Sending to Llama on $CHARLIE ($OLLAMA_MODEL)..." >&2
+  echo "[$(date +%H:%M:%S)] Sending to Llama on $GPU_HOST ($OLLAMA_MODEL)..." >&2
 
   # Build the JSON request body safely with python
   local jsonfile
@@ -225,12 +225,12 @@ request = {
 print(json.dumps(request))
 PYEOF
 
-  # Copy request to charlie and curl locally there
+  # Copy request to the GPU host and curl locally there
   local remote_json="/tmp/chronicle-request-$$.json"
-  scp -q "$jsonfile" "$CHARLIE:$remote_json" 2>/dev/null
+  scp -q "$jsonfile" "$GPU_HOST:$remote_json" 2>/dev/null
 
   local response
-  response="$(ssh "$CHARLIE" "curl -s http://localhost:11434/api/generate -d @$remote_json && rm -f $remote_json" 2>/dev/null)" || {
+  response="$(ssh "$GPU_HOST" "curl -s http://localhost:11434/api/generate -d @$remote_json && rm -f $remote_json" 2>/dev/null)" || {
     echo "ERROR: Ollama API call failed" >&2
     rm -f "$tmpfile" "$jsonfile"
     return 1

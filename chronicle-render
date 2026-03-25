@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # chronicle-render -- generate illustrations and animations for chronicle episodes
-# Uses ComfyUI (Flux) on charlie for illustrations, Manim for math, ffmpeg for video
+# Uses ComfyUI (Flux) on a GPU host for illustrations, Manim for math, ffmpeg for video
 #
 # Usage:
 #   chronicle-render <episode.md>              # render all visuals for an episode
@@ -13,7 +13,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
-CHARLIE="charlie"
+GPU_HOST="${GPU_HOST:-localhost}"
 COMFY_URL="http://localhost:8188"
 OLLAMA_MODEL="qwen2.5:72b-instruct-q8_0"
 STYLE="silverstein"
@@ -118,7 +118,7 @@ Example output:
   }
 ]"
 
-# Send to Llama on charlie
+# Send to Llama on a GPU host
 TMPFILE="$(mktemp /tmp/chronicle-render-XXXXXX.txt)"
 echo "$SCENE_PROMPT" > "$TMPFILE"
 
@@ -136,9 +136,9 @@ print(json.dumps(request))
 PYEOF
 
 REMOTE_JSON="/tmp/chronicle-render-$$.json"
-scp -q "$JSONFILE" "$CHARLIE:$REMOTE_JSON"
+scp -q "$JSONFILE" "$GPU_HOST:$REMOTE_JSON"
 
-SCENES_RAW="$(ssh "$CHARLIE" "curl -s $COMFY_URL/../api/generate 2>/dev/null || curl -s http://localhost:11434/api/generate -d @$REMOTE_JSON && rm -f $REMOTE_JSON" 2>/dev/null)"
+SCENES_RAW="$(ssh "$GPU_HOST" "curl -s $COMFY_URL/../api/generate 2>/dev/null || curl -s http://localhost:11434/api/generate -d @$REMOTE_JSON && rm -f $REMOTE_JSON" 2>/dev/null)"
 rm -f "$TMPFILE" "$JSONFILE"
 
 # Parse Llama response
@@ -163,12 +163,12 @@ if [[ "$SCENE_COUNT" -eq 0 ]]; then
 fi
 
 # --- Step 2: Generate illustrations via ComfyUI API ---
-echo "[$(date +%H:%M:%S)] Generating illustrations on charlie (Flux + $STYLE style)..."
+echo "[$(date +%H:%M:%S)] Generating illustrations on a GPU host (Flux + $STYLE style)..."
 
 # Check ComfyUI is running
-if ! ssh "$CHARLIE" "curl -s http://localhost:8188/system_stats" &>/dev/null; then
-  echo "[$(date +%H:%M:%S)] Starting ComfyUI on charlie..."
-  ssh "$CHARLIE" "cd ~/ComfyUI && ~/venvs/ml/bin/python3 main.py --listen 0.0.0.0 --port 8188 --dont-print-server &>/dev/null &"
+if ! ssh "$GPU_HOST" "curl -s http://localhost:8188/system_stats" &>/dev/null; then
+  echo "[$(date +%H:%M:%S)] Starting ComfyUI on a GPU host..."
+  ssh "$GPU_HOST" "cd ~/ComfyUI && ~/venvs/ml/bin/python3 main.py --listen 0.0.0.0 --port 8188 --dont-print-server &>/dev/null &"
   sleep 10
 fi
 
@@ -178,7 +178,7 @@ import sys, json, subprocess, time, os
 
 scenes = json.loads(sys.stdin.read())
 output_dir = '$OUTPUT_DIR'
-charlie = '$CHARLIE'
+gpu_host = '$GPU_HOST'
 
 for i, scene in enumerate(scenes):
     prompt = scene['prompt']
@@ -232,7 +232,7 @@ for i, scene in enumerate(scenes):
     import json as j
     wf_json = j.dumps(workflow)
     result = subprocess.run(
-        ['ssh', charlie, f'curl -s -X POST http://localhost:8188/prompt -H \"Content-Type: application/json\" -d {repr(wf_json)}'],
+        ['ssh', gpu_host, f'curl -s -X POST http://localhost:8188/prompt -H \"Content-Type: application/json\" -d {repr(wf_json)}'],
         capture_output=True, text=True
     )
 
@@ -241,17 +241,17 @@ for i, scene in enumerate(scenes):
         continue
 
     # Wait for completion
-    time.sleep(8)  # Flux Schnell is fast -- 4 steps takes ~5-8s on RTX PRO 6000
+    time.sleep(8)  # Flux Schnell is fast -- 4 steps takes ~5-8s on a modern GPU
 
     # Find and download the output
     out = subprocess.run(
-        ['ssh', charlie, f'ls -t ~/ComfyUI/output/{filename}* 2>/dev/null | head -1'],
+        ['ssh', gpu_host, f'ls -t ~/ComfyUI/output/{filename}* 2>/dev/null | head -1'],
         capture_output=True, text=True
     )
     if out.stdout.strip():
         remote_path = out.stdout.strip()
         local_path = os.path.join(output_dir, f'{filename}.png')
-        subprocess.run(['scp', '-q', f'{charlie}:{remote_path}', local_path])
+        subprocess.run(['scp', '-q', f'{gpu_host}:{remote_path}', local_path])
         print(f'    Saved: {local_path}')
     else:
         print(f'    WARNING: No output found for {filename}')

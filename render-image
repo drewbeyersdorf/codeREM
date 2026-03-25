@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# render-image -- generate a single illustration on charlie via SDXL Turbo
+# render-image -- generate a single illustration on a GPU host via SDXL Turbo
 # Usage: render-image "prompt text" output.png [--style silverstein|banksy|sketch]
 #
-# Renders in ~0.3s on RTX PRO 6000. Zero cost.
+# Renders in ~0.3s on a modern GPU. Zero cost.
 
 set -euo pipefail
 
-CHARLIE="charlie"
+GPU_HOST="${GPU_HOST:-localhost}"
 PROMPT="${1:?Usage: render-image \"prompt\" output.png [--style name]}"
 OUTPUT="${2:?Usage: render-image \"prompt\" output.png [--style name]}"
 STYLE="silverstein"
@@ -30,9 +30,9 @@ STYLES[diagram]="clean technical diagram, black lines on white, labeled componen
 PREFIX="${STYLES[$STYLE]:-${STYLES[silverstein]}}"
 FULL_PROMPT="$PREFIX $PROMPT"
 
-# Generate on charlie
+# Generate on a GPU host
 REMOTE_OUT="/tmp/render-$$.png"
-ssh "$CHARLIE" "PYTORCH_CUDA_ALLOC_CONF='backend:cudaMallocAsync' ~/venvs/ml/bin/python3 -c \"
+ssh "$GPU_HOST" "PYTORCH_CUDA_ALLOC_CONF='backend:cudaMallocAsync' ~/venvs/ml/bin/python3 -c \"
 import torch
 torch.backends.cudnn.enabled = False
 from diffusers import AutoPipelineForText2Image
@@ -44,6 +44,6 @@ image.save('$REMOTE_OUT')
 print('done')
 \" 2>/dev/null"
 
-scp -q "$CHARLIE:$REMOTE_OUT" "$OUTPUT"
-ssh "$CHARLIE" "rm -f $REMOTE_OUT"
+scp -q "$GPU_HOST:$REMOTE_OUT" "$OUTPUT"
+ssh "$GPU_HOST" "rm -f $REMOTE_OUT"
 echo "$OUTPUT"
