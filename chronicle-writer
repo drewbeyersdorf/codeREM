@@ -248,7 +248,7 @@ refine_with_claude() {
   local style_guide="$2"
   local existing="$3"
 
-  local prompt="You are writing an episode of 'Days of Your Life' -- autobiographical short stories by Drew Beyersdorf, operations manager at Methodology (premium meal delivery in LA).
+  local prompt="You are writing an episode of 'Days of Your Life' -- autobiographical short stories based on the author's memory files and daily work.
 
 STYLE GUIDE:
 $style_guide
