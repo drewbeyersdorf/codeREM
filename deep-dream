@@ -143,8 +143,10 @@ assemble_filesystem_manifest() {
 }
 
 assemble_vault_listing() {
-  if [[ -d "$HOME/vault/methodology-kb" ]]; then
-    ls -1 "$HOME/vault/methodology-kb/" 2>/dev/null || echo "(empty)"
+  # Look for a canonical knowledge base directory
+  local vault_dir="${VAULT_KB_DIR:-$HOME/vault/kb}"
+  if [[ -d "$vault_dir" ]]; then
+    ls -1 "$vault_dir/" 2>/dev/null || echo "(empty)"
   else
     echo "(vault directory not found)"
   fi
@@ -183,8 +185,9 @@ assemble_git_activity() {
 
 assemble_canonical_sources() {
   local result=""
-  if [[ -d "$HOME/vault/methodology-kb" ]]; then
-    for f in "$HOME"/vault/methodology-kb/*.md; do
+  local vault_dir="${VAULT_KB_DIR:-$HOME/vault/kb}"
+  if [[ -d "$vault_dir" ]]; then
+    for f in "$vault_dir"/*.md; do
       [[ -f "$f" ]] || continue
       local basename
       basename="$(basename "$f")"
