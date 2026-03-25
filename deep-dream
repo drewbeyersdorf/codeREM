@@ -1,0 +1,469 @@
+#!/usr/bin/env bash
+# deep-dream -- Claude Code memory consolidation agent
+# Runs in three phases: surface, structural, semantic
+# Narrates live, writes dream journal, git commits per phase
+#
+# Usage:
+#   deep-dream                  # all 3 phases
+#   deep-dream --surface        # phase 1 only
+#   deep-dream --structural     # phases 1-2
+#   deep-dream --dry-run        # narrate but change nothing
+#   deep-dream --journal-only   # skip narration, just write journal
+
+set -euo pipefail
+
+# --- Configuration ---
+MEMORY_DIR="$HOME/.claude/projects/-home-drew/memory"
+BACKUP_DIR="$HOME/.claude/projects/-home-drew/memory-backups"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+PROMPTS_DIR="$SCRIPT_DIR/prompts"
+TODAY="$(date +%Y-%m-%d)"
+NOW="$(date +%H:%M:%S)"
+JOURNAL="$BACKUP_DIR/dream-journal-$TODAY.md"
+DRY_RUN=false
+JOURNAL_ONLY=false
+RUN_PHASE1=true
+RUN_PHASE2=true
+RUN_PHASE3=true
+MODEL="sonnet"
+
+# Counters
+TOTAL_FIXES=0
+TOTAL_FLAGS=0
+PHASE1_FIXES=0
+PHASE1_FLAGS=0
+PHASE2_FIXES=0
+PHASE2_FLAGS=0
+PHASE3_FLAGS=0
+
+# --- Argument Parsing ---
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --surface)
+      RUN_PHASE2=false
+      RUN_PHASE3=false
+      shift
+      ;;
+    --structural)
+      RUN_PHASE3=false
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    --journal-only)
+      JOURNAL_ONLY=true
+      shift
+      ;;
+    --model)
+      MODEL="$2"
+      shift 2
+      ;;
+    --help|-h)
+      echo "deep-dream -- Claude Code memory consolidation agent"
+      echo ""
+      echo "Usage:"
+      echo "  deep-dream                  # all 3 phases"
+      echo "  deep-dream --surface        # phase 1 only"
+      echo "  deep-dream --structural     # phases 1-2"
+      echo "  deep-dream --dry-run        # narrate but change nothing"
+      echo "  deep-dream --journal-only   # skip narration, just write journal"
+      echo "  deep-dream --model opus     # use specific model (default: sonnet)"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# --- Verify dependencies ---
+command -v claude >/dev/null 2>&1 || { echo "ERROR: claude CLI not found" >&2; exit 1; }
+command -v jq >/dev/null 2>&1 || { echo "ERROR: jq not found" >&2; exit 1; }
+[[ -d "$MEMORY_DIR" ]] || { echo "ERROR: Memory directory not found: $MEMORY_DIR" >&2; exit 1; }
+
+# --- Ensure backup dir exists ---
+mkdir -p "$BACKUP_DIR"
+
+# --- Narration ---
+narrate() {
+  local msg="[$(date +%H:%M:%S)] $1"
+  if [[ "$JOURNAL_ONLY" != true ]]; then
+    echo "$msg"
+  fi
+  echo "$msg" >> "$JOURNAL"
+}
+
+narrate_section() {
+  local msg="$1"
+  if [[ "$JOURNAL_ONLY" != true ]]; then
+    echo ""
+    echo "=== $msg ==="
+    echo ""
+  fi
+  echo "" >> "$JOURNAL"
+  echo "## $msg" >> "$JOURNAL"
+  echo "" >> "$JOURNAL"
+}
+
+# --- Context Assembly ---
+
+assemble_file_contents() {
+  local result=""
+  for f in "$MEMORY_DIR"/*.md; do
+    [[ -f "$f" ]] || continue
+    local basename
+    basename="$(basename "$f")"
+    result+="
+=== $basename ===
+$(cat "$f")
+
+"
+  done
+  echo "$result"
+}
+
+assemble_filesystem_manifest() {
+  # Extract all file paths referenced in memory files, check existence
+  local result=""
+  local paths
+  paths=$(grep -rohP '(?:~/|/home/drew/)[^\s\)\]`"'"'"']+' "$MEMORY_DIR"/*.md 2>/dev/null | sort -u || true)
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    local expanded="${path/#\~/$HOME}"
+    if [[ -e "$expanded" ]]; then
+      result+="EXISTS: $path"$'\n'
+    else
+      result+="MISSING: $path"$'\n'
+    fi
+  done <<< "$paths"
+  echo "$result"
+}
+
+assemble_vault_listing() {
+  if [[ -d "$HOME/vault/methodology-kb" ]]; then
+    ls -1 "$HOME/vault/methodology-kb/" 2>/dev/null || echo "(empty)"
+  else
+    echo "(vault directory not found)"
+  fi
+}
+
+assemble_project_dirs() {
+  local result=""
+  for d in "$HOME"/projects/*/; do
+    [[ -d "$d" ]] || continue
+    local name
+    name="$(basename "$d")"
+    local last_commit="(not a git repo)"
+    if [[ -d "$d/.git" ]]; then
+      last_commit="$(cd "$d" && git log --oneline -1 --format='%h %s (%ar)' 2>/dev/null || echo '(no commits)')"
+    fi
+    result+="$name: $last_commit"$'\n'
+  done
+  echo "$result"
+}
+
+assemble_git_activity() {
+  local result=""
+  for d in "$HOME"/projects/*/; do
+    [[ -d "$d/.git" ]] || continue
+    local name
+    name="$(basename "$d")"
+    local log
+    log="$(cd "$d" && git log --oneline --since='2 weeks ago' --format='  %h %s (%ar)' 2>/dev/null | head -20 || true)"
+    if [[ -n "$log" ]]; then
+      result+="--- $name ---"$'\n'
+      result+="$log"$'\n'
+    fi
+  done
+  echo "$result"
+}
+
+assemble_canonical_sources() {
+  local result=""
+  if [[ -d "$HOME/vault/methodology-kb" ]]; then
+    for f in "$HOME"/vault/methodology-kb/*.md; do
+      [[ -f "$f" ]] || continue
+      local basename
+      basename="$(basename "$f")"
+      result+="
+=== vault: $basename ===
+$(head -100 "$f")
+
+"
+    done
+  fi
+  echo "$result"
+}
+
+# --- Phase Execution Engine ---
+
+run_phase() {
+  local phase_num="$1"
+  local prompt_file="$2"
+  local phase_name="$3"
+
+  narrate_section "Phase $phase_num: $phase_name"
+  narrate "Starting phase $phase_num..."
+
+  # Read prompt template
+  if [[ ! -f "$prompt_file" ]]; then
+    narrate "ERROR: Prompt template not found: $prompt_file"
+    return 1
+  fi
+  local template
+  template="$(cat "$prompt_file")"
+
+  # Assemble context -- write all context to temp files first
+  narrate "Assembling context..."
+  local tmpdir
+  tmpdir="$(mktemp -d /tmp/deep-dream-XXXXXX)"
+  trap "rm -rf '$tmpdir'" RETURN
+
+  assemble_file_contents > "$tmpdir/file-contents.txt"
+  assemble_filesystem_manifest > "$tmpdir/fs-manifest.txt"
+  ls -la "$MEMORY_DIR"/*.md 2>/dev/null > "$tmpdir/file-listing.txt" || echo "(empty)" > "$tmpdir/file-listing.txt"
+  cat "$MEMORY_DIR/MEMORY.md" > "$tmpdir/memory-index.txt" 2>/dev/null || echo "(no MEMORY.md)" > "$tmpdir/memory-index.txt"
+  assemble_vault_listing > "$tmpdir/vault-listing.txt"
+  assemble_canonical_sources > "$tmpdir/canonical-sources.txt"
+  assemble_project_dirs > "$tmpdir/project-dirs.txt"
+  assemble_git_activity > "$tmpdir/git-activity.txt"
+
+  # Build the final prompt using python for safe string replacement
+  local tmpfile="$tmpdir/prompt.md"
+  python3 << PYEOF > "$tmpfile"
+import os
+
+template = open('$prompt_file').read()
+tmpdir = '$tmpdir'
+
+replacements = {
+    '{{TODAY}}': '$TODAY',
+    '{{MEMORY_DIR}}': '$MEMORY_DIR',
+    '{{FILE_LISTING}}': open(os.path.join(tmpdir, 'file-listing.txt')).read(),
+    '{{FILE_CONTENTS}}': open(os.path.join(tmpdir, 'file-contents.txt')).read(),
+    '{{FILESYSTEM_MANIFEST}}': open(os.path.join(tmpdir, 'fs-manifest.txt')).read(),
+    '{{MEMORY_INDEX}}': open(os.path.join(tmpdir, 'memory-index.txt')).read(),
+    '{{VAULT_LISTING}}': open(os.path.join(tmpdir, 'vault-listing.txt')).read(),
+    '{{CANONICAL_SOURCES}}': open(os.path.join(tmpdir, 'canonical-sources.txt')).read(),
+    '{{PROJECT_DIRS}}': open(os.path.join(tmpdir, 'project-dirs.txt')).read(),
+    '{{GIT_ACTIVITY}}': open(os.path.join(tmpdir, 'git-activity.txt')).read(),
+}
+
+for key, value in replacements.items():
+    template = template.replace(key, value)
+
+print(template)
+PYEOF
+
+  local prompt_size
+  prompt_size="$(wc -c < "$tmpfile")"
+  narrate "Prompt assembled ($((prompt_size / 1024))KB). Calling Claude ($MODEL)..."
+
+  # JSON schema for structured output
+  local schema='{"type":"object","properties":{"actions":{"type":"array","items":{"type":"object","properties":{"action":{"type":"string","enum":["fix","flag","delete"]},"file":{"type":"string"},"description":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"},"severity":{"type":"string","enum":["info","warning","error"]},"related_file":{"type":"string"}},"required":["action","file","description"]}},"summary":{"type":"string"}},"required":["actions","summary"]}'
+
+  # Call Claude
+  local response
+  response="$(claude --print --model "$MODEL" --json-schema "$schema" --output-format json < "$tmpfile" 2>/dev/null)" || {
+    narrate "ERROR: Claude CLI call failed for phase $phase_num"
+    return 1
+  }
+
+  # Parse response -- structured_output is nested in the JSON envelope
+  local parsed
+  parsed="$(echo "$response" | jq '.structured_output // .' 2>/dev/null)"
+  local action_count
+  action_count="$(echo "$parsed" | jq '.actions | length' 2>/dev/null || echo 0)"
+  narrate "Claude returned $action_count actions."
+
+  local fix_count=0
+  local flag_count=0
+
+  # Process each action
+  local i=0
+  while [[ $i -lt $action_count ]]; do
+    local action file description old_text new_text severity related_file
+    action="$(echo "$parsed" | jq -r ".actions[$i].action")"
+    file="$(echo "$parsed" | jq -r ".actions[$i].file")"
+    description="$(echo "$parsed" | jq -r ".actions[$i].description")"
+    old_text="$(echo "$parsed" | jq -r ".actions[$i].old_text // empty")"
+    new_text="$(echo "$parsed" | jq -r ".actions[$i].new_text // empty")"
+    severity="$(echo "$parsed" | jq -r ".actions[$i].severity // \"info\"")"
+    related_file="$(echo "$parsed" | jq -r ".actions[$i].related_file // empty")"
+
+    case "$action" in
+      fix)
+        if [[ "$DRY_RUN" == true ]]; then
+          narrate "  [DRY-RUN] Would fix $file: $description"
+        else
+          # Apply the fix using python with temp files for exact string replacement
+          local target="$MEMORY_DIR/$file"
+          if [[ -f "$target" ]] && [[ -n "$old_text" ]] && [[ -n "$new_text" ]]; then
+            echo "$parsed" | jq -r ".actions[$i].old_text" > "$tmpdir/old.txt"
+            echo "$parsed" | jq -r ".actions[$i].new_text" > "$tmpdir/new.txt"
+            if python3 << FIXEOF
+import sys
+target = "$target"
+tmpdir = "$tmpdir"
+content = open(target, 'r').read()
+old = open(tmpdir + '/old.txt', 'r').read()
+new = open(tmpdir + '/new.txt', 'r').read()
+if old in content:
+    content = content.replace(old, new, 1)
+    open(target, 'w').write(content)
+    sys.exit(0)
+else:
+    sys.exit(1)
+FIXEOF
+            then
+              narrate "  FIXED $file: $description"
+              fix_count=$((fix_count + 1))
+            else
+              narrate "  SKIP $file: old_text not found (may have been fixed by prior action)"
+            fi
+          else
+            narrate "  SKIP $file: missing file or text fields"
+          fi
+        fi
+        ;;
+      flag)
+        local extra=""
+        [[ -n "$related_file" ]] && extra=" (related: $related_file)"
+        narrate "  FLAG [$severity] $file: $description$extra"
+        flag_count=$((flag_count + 1))
+        ;;
+      delete)
+        narrate "  DELETE-REQUEST [$severity] $file: $description (queued for manual review)"
+        flag_count=$((flag_count + 1))
+        ;;
+    esac
+
+    i=$((i + 1))
+  done
+
+  # Summary
+  local summary
+  summary="$(echo "$parsed" | jq -r '.summary // "No summary"')"
+  narrate ""
+  narrate "Phase $phase_num summary: $summary"
+  narrate "Phase $phase_num complete. $fix_count fixes applied, $flag_count items flagged."
+
+  # Update counters
+  case "$phase_num" in
+    1) PHASE1_FIXES=$fix_count; PHASE1_FLAGS=$flag_count ;;
+    2) PHASE2_FIXES=$fix_count; PHASE2_FLAGS=$flag_count ;;
+    3) PHASE3_FLAGS=$flag_count ;;
+  esac
+  TOTAL_FIXES=$((TOTAL_FIXES + fix_count))
+  TOTAL_FLAGS=$((TOTAL_FLAGS + flag_count))
+
+  # Git commit if changes were made
+  if [[ "$DRY_RUN" != true ]] && [[ $fix_count -gt 0 ]]; then
+    cd "$MEMORY_DIR"
+    if [[ -d .git ]]; then
+      git add -A
+      git commit -m "deep-dream: phase $phase_num ($phase_name) -- $fix_count fixes" 2>/dev/null || true
+      narrate "Git commit: phase $phase_num changes committed."
+    fi
+  fi
+
+  # Cleanup temp files
+  rm -f /tmp/dd-file-contents.txt /tmp/dd-fs-manifest.txt /tmp/dd-memory-index.txt
+  rm -f /tmp/dd-vault-listing.txt /tmp/dd-canonical-sources.txt /tmp/dd-project-dirs.txt
+  rm -f /tmp/dd-git-activity.txt "$tmpfile"
+}
+
+# --- Journal Header ---
+write_journal_header() {
+  local file_count
+  file_count="$(ls "$MEMORY_DIR"/*.md 2>/dev/null | wc -l)"
+  local phases=""
+  [[ "$RUN_PHASE1" == true ]] && phases+="1 "
+  [[ "$RUN_PHASE2" == true ]] && phases+="2 "
+  [[ "$RUN_PHASE3" == true ]] && phases+="3"
+  local mode="live"
+  [[ "$DRY_RUN" == true ]] && mode="dry-run"
+
+  cat > "$JOURNAL" <<EOF
+# Deep Dream Journal - $TODAY
+
+**Started:** $NOW
+**Phases:** $phases
+**Mode:** $mode
+**Model:** $MODEL
+**Memory files:** $file_count
+
+---
+EOF
+}
+
+# --- Journal Footer ---
+write_journal_footer() {
+  local end_time
+  end_time="$(date +%H:%M:%S)"
+  local start_seconds end_seconds duration_seconds
+  start_seconds="$(date -d "$NOW" +%s 2>/dev/null || echo 0)"
+  end_seconds="$(date +%s)"
+  duration_seconds=$((end_seconds - start_seconds))
+  local minutes=$((duration_seconds / 60))
+  local seconds=$((duration_seconds % 60))
+
+  cat >> "$JOURNAL" <<EOF
+
+---
+
+## Summary
+
+- **Phase 1 (Surface):** $PHASE1_FIXES fixes applied, $PHASE1_FLAGS items flagged
+- **Phase 2 (Structural):** $PHASE2_FIXES fixes applied, $PHASE2_FLAGS items flagged
+- **Phase 3 (Semantic):** $PHASE3_FLAGS items flagged
+- **Total:** $TOTAL_FIXES fixes, $TOTAL_FLAGS flags
+
+---
+
+**Completed:** $end_time
+**Duration:** ${minutes}m ${seconds}s
+EOF
+}
+
+# --- Main ---
+
+echo ""
+echo "  deep-dream -- memory consolidation agent"
+echo "  ========================================="
+echo ""
+
+write_journal_header
+
+if [[ "$DRY_RUN" == true ]]; then
+  narrate "DRY RUN MODE -- no changes will be applied"
+fi
+
+# Run phases
+if [[ "$RUN_PHASE1" == true ]]; then
+  run_phase 1 "$PROMPTS_DIR/phase1-surface.md" "Surface Cleanup"
+fi
+
+if [[ "$RUN_PHASE2" == true ]]; then
+  run_phase 2 "$PROMPTS_DIR/phase2-structural.md" "Structural Integrity"
+fi
+
+if [[ "$RUN_PHASE3" == true ]]; then
+  run_phase 3 "$PROMPTS_DIR/phase3-semantic.md" "Semantic Verification"
+fi
+
+write_journal_footer
+
+# Final summary
+echo ""
+echo "  ========================================="
+echo "  Deep Dream Complete"
+echo "  ========================================="
+echo "  Fixes applied: $TOTAL_FIXES"
+echo "  Items flagged: $TOTAL_FLAGS"
+echo "  Journal: $JOURNAL"
+echo "  ========================================="
+echo ""

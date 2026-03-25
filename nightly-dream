@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# nightly-dream -- scheduled deep-dream + chronicle generation
+# Runs deep-dream, then generates one episode from findings
+# Designed for cron: 0 3 * * * /home/drew/.local/bin/nightly-dream
+#
+# No thresholds. No conditions. Run every night.
+
+set -euo pipefail
+
+LOG_DIR="$HOME/.claude/projects/-home-drew/memory-backups"
+DATE="$(date +%Y-%m-%d)"
+LOG="$LOG_DIR/nightly-dream-$DATE.log"
+
+exec > >(tee -a "$LOG") 2>&1
+
+echo "========================================="
+echo "Nightly Dream -- $DATE $(date +%H:%M:%S)"
+echo "========================================="
+
+# Phase 1: Deep Dream (all 3 phases)
+echo ""
+echo "[$(date +%H:%M:%S)] Running deep-dream..."
+deep-dream 2>&1 || {
+  echo "[$(date +%H:%M:%S)] deep-dream failed. Check log: $LOG"
+  exit 1
+}
+
+# Phase 2: Generate one chronicle episode from today's findings
+FINDINGS="$HOME/vault/projects/deep-dream-findings-$DATE.md"
+if [[ ! -f "$FINDINGS" ]]; then
+  # Use the dream journal as findings source instead
+  FINDINGS="$LOG_DIR/dream-journal-$DATE.md"
+fi
+
+if [[ -f "$FINDINGS" ]]; then
+  echo ""
+  echo "[$(date +%H:%M:%S)] Generating chronicle episode..."
+
+  # Rotate through sections
+  SECTIONS=(i-the-numbers ii-the-machine iii-the-operation iv-the-market v-the-people vi-the-money vii-the-law viii-the-build ix-the-self)
+  DAY_OF_YEAR=$(date +%-j)
+  SECTION_IDX=$((DAY_OF_YEAR % ${#SECTIONS[@]}))
+  SECTION="${SECTIONS[$SECTION_IDX]}"
+
+  chronicle-writer "$FINDINGS" --section "$SECTION" 2>&1 || {
+    echo "[$(date +%H:%M:%S)] chronicle-writer failed. Non-fatal."
+  }
+else
+  echo "[$(date +%H:%M:%S)] No findings file found. Skipping chronicle generation."
+fi
+
+echo ""
+echo "========================================="
+echo "Nightly Dream complete -- $(date +%H:%M:%S)"
+echo "Log: $LOG"
+echo "========================================="

@@ -1,0 +1,276 @@
+#!/usr/bin/env bash
+# chronicle-render -- generate illustrations and animations for chronicle episodes
+# Uses ComfyUI (Flux) on charlie for illustrations, Manim for math, ffmpeg for video
+#
+# Usage:
+#   chronicle-render <episode.md>              # render all visuals for an episode
+#   chronicle-render --style silverstein       # Shel Silverstein line art
+#   chronicle-render --style banksy            # Banksy stencil art
+#   chronicle-render --style sketch            # hand-drawn sketch
+#   chronicle-render --illustrations-only      # just images, no video
+#   chronicle-render --list-styles             # show available styles
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+CHARLIE="charlie"
+COMFY_URL="http://localhost:8188"
+OLLAMA_MODEL="qwen2.5:72b-instruct-q8_0"
+STYLE="silverstein"
+ILLUSTRATIONS_ONLY=false
+EPISODE_FILE=""
+
+# Style presets -- prompt prefixes that define the visual aesthetic
+declare -A STYLE_PROMPTS
+STYLE_PROMPTS[silverstein]="black and white pen and ink illustration, simple clean line art, whimsical hand-drawn style like Shel Silverstein, minimal detail, white background, single subject, playful but thoughtful, children's book illustration quality"
+STYLE_PROMPTS[banksy]="black and white stencil art in the style of street art, high contrast, bold shapes, political art aesthetic, spray paint texture, concrete wall background, provocative and minimal"
+STYLE_PROMPTS[sketch]="rough pencil sketch on aged paper, architectural drawing style, technical but human, blueprint aesthetic, hand-drawn lines with slight imperfection, margin notes"
+STYLE_PROMPTS[terminal]="dark terminal screenshot aesthetic, green on black, monospace font, code and data visualization, hacker aesthetic, matrix-inspired"
+STYLE_PROMPTS[diagram]="clean technical diagram, black lines on white, labeled components, arrows showing flow, engineering schematic style, no decoration"
+
+# --- Argument Parsing ---
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --style)
+      STYLE="$2"
+      shift 2
+      ;;
+    --illustrations-only)
+      ILLUSTRATIONS_ONLY=true
+      shift
+      ;;
+    --list-styles)
+      echo "Available styles:"
+      for s in "${!STYLE_PROMPTS[@]}"; do
+        echo "  $s: ${STYLE_PROMPTS[$s]:0:80}..."
+      done
+      exit 0
+      ;;
+    --help|-h)
+      echo "chronicle-render -- generate illustrations for chronicle episodes"
+      echo ""
+      echo "Usage:"
+      echo "  chronicle-render <episode.md>              # render visuals"
+      echo "  chronicle-render --style silverstein       # Shel Silverstein line art"
+      echo "  chronicle-render --style banksy            # Banksy stencil art"
+      echo "  chronicle-render --style sketch            # hand-drawn sketch"
+      echo "  chronicle-render --illustrations-only      # images only, no video"
+      echo "  chronicle-render --list-styles             # show styles"
+      exit 0
+      ;;
+    *)
+      if [[ -f "$1" ]]; then
+        EPISODE_FILE="$1"
+      else
+        echo "Unknown option or file not found: $1" >&2
+        exit 1
+      fi
+      shift
+      ;;
+  esac
+done
+
+[[ -z "$EPISODE_FILE" ]] && { echo "ERROR: No episode file specified" >&2; exit 1; }
+[[ -z "${STYLE_PROMPTS[$STYLE]+x}" ]] && { echo "ERROR: Unknown style: $STYLE" >&2; exit 1; }
+
+EPISODE_DIR="$(dirname "$EPISODE_FILE")"
+EPISODE_NAME="$(basename "$EPISODE_FILE" .md)"
+OUTPUT_DIR="$EPISODE_DIR/media/$EPISODE_NAME"
+mkdir -p "$OUTPUT_DIR"
+
+echo ""
+echo "  chronicle-render"
+echo "  ================"
+echo "  Episode: $EPISODE_FILE"
+echo "  Style: $STYLE"
+echo "  Output: $OUTPUT_DIR/"
+echo ""
+
+# --- Step 1: Extract visual scenes from episode using Llama ---
+echo "[$(date +%H:%M:%S)] Extracting visual scenes from episode..."
+
+EPISODE_TEXT="$(cat "$EPISODE_FILE")"
+STYLE_PREFIX="${STYLE_PROMPTS[$STYLE]}"
+
+SCENE_PROMPT="You are a visual director for an illustrated book. Given this episode, extract 3-5 key visual moments that should be illustrated.
+
+EPISODE:
+$EPISODE_TEXT
+
+For each visual moment, output a JSON array with:
+- \"scene\": what is visually happening (one sentence)
+- \"prompt\": an image generation prompt that captures this moment in the style: $STYLE_PREFIX
+- \"filename\": a short kebab-case filename like \"broken-pointer\" or \"entropy-graph\"
+
+Rules:
+- Each prompt MUST start with the style prefix
+- Prompts should describe a SINGLE clear image, not a complex scene
+- Focus on the CS/math/business CONCEPTS being illustrated, not literal events
+- Think: what would a Shel Silverstein illustration of a dangling pointer look like?
+- Output valid JSON array only. Nothing else.
+
+Example output:
+[
+  {
+    \"scene\": \"A hand reaching for a door that leads to empty space\",
+    \"prompt\": \"$STYLE_PREFIX, a hand reaching for a doorknob, but behind the door is empty white void, metaphor for missing reference\",
+    \"filename\": \"reaching-for-nothing\"
+  }
+]"
+
+# Send to Llama on charlie
+TMPFILE="$(mktemp /tmp/chronicle-render-XXXXXX.txt)"
+echo "$SCENE_PROMPT" > "$TMPFILE"
+
+JSONFILE="$(mktemp /tmp/chronicle-render-req-XXXXXX.json)"
+python3 << PYEOF > "$JSONFILE"
+import json
+prompt_text = open('$TMPFILE').read()
+request = {
+    "model": "$OLLAMA_MODEL",
+    "prompt": prompt_text,
+    "stream": False,
+    "options": {"temperature": 0.7, "num_predict": 2048}
+}
+print(json.dumps(request))
+PYEOF
+
+REMOTE_JSON="/tmp/chronicle-render-$$.json"
+scp -q "$JSONFILE" "$CHARLIE:$REMOTE_JSON"
+
+SCENES_RAW="$(ssh "$CHARLIE" "curl -s $COMFY_URL/../api/generate 2>/dev/null || curl -s http://localhost:11434/api/generate -d @$REMOTE_JSON && rm -f $REMOTE_JSON" 2>/dev/null)"
+rm -f "$TMPFILE" "$JSONFILE"
+
+# Parse Llama response
+SCENES="$(echo "$SCENES_RAW" | python3 -c "
+import sys, json
+raw = json.loads(sys.stdin.read()).get('response', '')
+start = raw.find('[')
+end = raw.rfind(']') + 1
+if start >= 0 and end > start:
+    scenes = json.loads(raw[start:end])
+    print(json.dumps(scenes))
+else:
+    print('[]')
+" 2>/dev/null)"
+
+SCENE_COUNT="$(echo "$SCENES" | python3 -c "import sys,json; print(len(json.loads(sys.stdin.read())))")"
+echo "[$(date +%H:%M:%S)] Extracted $SCENE_COUNT visual scenes."
+
+if [[ "$SCENE_COUNT" -eq 0 ]]; then
+  echo "ERROR: No scenes extracted. Check Llama output." >&2
+  exit 1
+fi
+
+# --- Step 2: Generate illustrations via ComfyUI API ---
+echo "[$(date +%H:%M:%S)] Generating illustrations on charlie (Flux + $STYLE style)..."
+
+# Check ComfyUI is running
+if ! ssh "$CHARLIE" "curl -s http://localhost:8188/system_stats" &>/dev/null; then
+  echo "[$(date +%H:%M:%S)] Starting ComfyUI on charlie..."
+  ssh "$CHARLIE" "cd ~/ComfyUI && ~/venvs/ml/bin/python3 main.py --listen 0.0.0.0 --port 8188 --dont-print-server &>/dev/null &"
+  sleep 10
+fi
+
+# Generate each scene
+echo "$SCENES" | python3 -c "
+import sys, json, subprocess, time, os
+
+scenes = json.loads(sys.stdin.read())
+output_dir = '$OUTPUT_DIR'
+charlie = '$CHARLIE'
+
+for i, scene in enumerate(scenes):
+    prompt = scene['prompt']
+    filename = scene['filename']
+    print(f'  [{i+1}/{len(scenes)}] {filename}: {scene[\"scene\"][:60]}...')
+
+    # ComfyUI API workflow for Flux Schnell
+    workflow = {
+        'prompt': {
+            '1': {
+                'class_type': 'UNETLoader',
+                'inputs': {'unet_name': 'flux1-schnell.safetensors', 'weight_dtype': 'fp8_e4m3fn'}
+            },
+            '2': {
+                'class_type': 'DualCLIPLoader',
+                'inputs': {'clip_name1': 'clip_l.safetensors', 'clip_name2': 't5xxl_fp8_e4m3fn.safetensors', 'type': 'flux'}
+            },
+            '3': {
+                'class_type': 'VAELoader',
+                'inputs': {'vae_name': 'ae.safetensors'}
+            },
+            '4': {
+                'class_type': 'CLIPTextEncode',
+                'inputs': {'text': prompt, 'clip': ['2', 0]}
+            },
+            '5': {
+                'class_type': 'EmptySD3LatentImage',
+                'inputs': {'width': 1024, 'height': 1024, 'batch_size': 1}
+            },
+            '6': {
+                'class_type': 'KSampler',
+                'inputs': {
+                    'model': ['1', 0], 'positive': ['4', 0], 'negative': ['4', 0],
+                    'latent_image': ['5', 0], 'seed': i * 42 + 1,
+                    'steps': 4, 'cfg': 1.0, 'sampler_name': 'euler',
+                    'scheduler': 'simple', 'denoise': 1.0
+                }
+            },
+            '7': {
+                'class_type': 'VAEDecode',
+                'inputs': {'samples': ['6', 0], 'vae': ['3', 0]}
+            },
+            '8': {
+                'class_type': 'SaveImage',
+                'inputs': {'images': ['7', 0], 'filename_prefix': filename}
+            }
+        }
+    }
+
+    # Queue the prompt via ComfyUI API
+    import json as j
+    wf_json = j.dumps(workflow)
+    result = subprocess.run(
+        ['ssh', charlie, f'curl -s -X POST http://localhost:8188/prompt -H \"Content-Type: application/json\" -d {repr(wf_json)}'],
+        capture_output=True, text=True
+    )
+
+    if result.returncode != 0:
+        print(f'    ERROR: {result.stderr[:100]}')
+        continue
+
+    # Wait for completion
+    time.sleep(8)  # Flux Schnell is fast -- 4 steps takes ~5-8s on RTX PRO 6000
+
+    # Find and download the output
+    out = subprocess.run(
+        ['ssh', charlie, f'ls -t ~/ComfyUI/output/{filename}* 2>/dev/null | head -1'],
+        capture_output=True, text=True
+    )
+    if out.stdout.strip():
+        remote_path = out.stdout.strip()
+        local_path = os.path.join(output_dir, f'{filename}.png')
+        subprocess.run(['scp', '-q', f'{charlie}:{remote_path}', local_path])
+        print(f'    Saved: {local_path}')
+    else:
+        print(f'    WARNING: No output found for {filename}')
+" 2>&1
+
+echo ""
+echo "[$(date +%H:%M:%S)] Illustrations complete."
+echo "  Output: $OUTPUT_DIR/"
+ls -la "$OUTPUT_DIR/"*.png 2>/dev/null || echo "  (no images generated yet -- check ComfyUI logs)"
+
+if [[ "$ILLUSTRATIONS_ONLY" == true ]]; then
+  echo ""
+  echo "  Illustrations-only mode. Done."
+  exit 0
+fi
+
+# --- Step 3: Compose video (future -- Manim + ffmpeg) ---
+echo ""
+echo "[$(date +%H:%M:%S)] Video composition not yet implemented."
+echo "  Images are at: $OUTPUT_DIR/"
+echo "  To manually compose: ffmpeg -framerate 1/5 -pattern_type glob -i '$OUTPUT_DIR/*.png' -c:v libx264 -pix_fmt yuv420p $OUTPUT_DIR/$EPISODE_NAME.mp4"
+echo ""

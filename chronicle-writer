@@ -1,0 +1,414 @@
+#!/usr/bin/env bash
+# chronicle-writer -- two-model pipeline for "Days of Your Life"
+# Llama (charlie GPU) generates rough drafts, Claude refines into Drew's voice
+#
+# Usage:
+#   chronicle-writer <findings-file>              # write episodes from findings
+#   chronicle-writer --section "ii-the-machine"   # write for specific section
+#   chronicle-writer --dry-run                    # show what would be written
+#   chronicle-writer --llama-only                 # skip Claude refinement
+#   chronicle-writer --claude-only <draft>        # refine existing draft
+
+set -euo pipefail
+
+# --- Configuration ---
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+CHRONICLES_DIR="$HOME/vault/projects/chronicles"
+FINDINGS_DIR="$HOME/vault/projects"
+CHARLIE="charlie"
+OLLAMA_MODEL="qwen2.5:72b-instruct-q8_0"
+CLAUDE_MODEL="sonnet"
+DRY_RUN=false
+LLAMA_ONLY=false
+CLAUDE_ONLY=false
+SECTION=""
+DRAFT_FILE=""
+FINDINGS_FILE=""
+
+# --- Argument Parsing ---
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --section)
+      SECTION="$2"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    --llama-only)
+      LLAMA_ONLY=true
+      shift
+      ;;
+    --claude-only)
+      CLAUDE_ONLY=true
+      DRAFT_FILE="$2"
+      shift 2
+      ;;
+    --model)
+      OLLAMA_MODEL="$2"
+      shift 2
+      ;;
+    --help|-h)
+      echo "chronicle-writer -- two-model pipeline for Days of Your Life"
+      echo ""
+      echo "Usage:"
+      echo "  chronicle-writer <findings-file>              # write from findings"
+      echo "  chronicle-writer --section ii-the-machine     # specific section"
+      echo "  chronicle-writer --dry-run                    # preview only"
+      echo "  chronicle-writer --llama-only                 # skip Claude pass"
+      echo "  chronicle-writer --claude-only <draft>        # refine draft"
+      echo "  chronicle-writer --model <ollama-model>       # override model"
+      exit 0
+      ;;
+    *)
+      if [[ -f "$1" ]]; then
+        FINDINGS_FILE="$1"
+      else
+        echo "Unknown option or file not found: $1" >&2
+        exit 1
+      fi
+      shift
+      ;;
+  esac
+done
+
+# Default findings file
+if [[ -z "$FINDINGS_FILE" ]] && [[ "$CLAUDE_ONLY" != true ]]; then
+  FINDINGS_FILE="$(ls -t "$FINDINGS_DIR"/deep-dream-findings-*.md 2>/dev/null | head -1)"
+  if [[ -z "$FINDINGS_FILE" ]]; then
+    echo "ERROR: No findings file found. Run deep-dream first or specify a file." >&2
+    exit 1
+  fi
+fi
+
+echo ""
+echo "  chronicle-writer -- Days of Your Life"
+echo "  ======================================"
+echo "  Findings: ${FINDINGS_FILE:-"(none, refine mode)"}"
+echo "  Section:  ${SECTION:-"(all)"}"
+echo "  Ollama:   $OLLAMA_MODEL on $CHARLIE"
+echo "  Claude:   $CLAUDE_MODEL"
+echo "  Mode:     $(if $DRY_RUN; then echo "dry-run"; elif $LLAMA_ONLY; then echo "llama-only"; elif $CLAUDE_ONLY; then echo "claude-only"; else echo "full pipeline"; fi)"
+echo ""
+
+# --- Verify connectivity ---
+if [[ "$CLAUDE_ONLY" != true ]]; then
+  if ! ssh -o ConnectTimeout=5 "$CHARLIE" "ollama list" &>/dev/null; then
+    echo "ERROR: Cannot connect to $CHARLIE or Ollama not running" >&2
+    exit 1
+  fi
+  echo "[$(date +%H:%M:%S)] Connected to $CHARLIE, Ollama running."
+fi
+
+# --- Load context ---
+load_style_guide() {
+  cat "$CHRONICLES_DIR/README.md"
+}
+
+load_existing_episodes() {
+  local section_filter="${1:-}"
+  local result=""
+  for f in "$CHRONICLES_DIR"/*/*.md; do
+    [[ -f "$f" ]] || continue
+    if [[ -n "$section_filter" ]] && [[ "$f" != *"$section_filter"* ]]; then
+      continue
+    fi
+    result+="
+=== $(basename "$(dirname "$f")")/$(basename "$f") ===
+$(cat "$f")
+
+"
+  done
+  echo "$result"
+}
+
+next_episode_number() {
+  local section="$1"
+  local dir="$CHRONICLES_DIR/$section"
+  mkdir -p "$dir"
+  local max=0
+  for f in "$dir"/*.md; do
+    [[ -f "$f" ]] || continue
+    local num
+    num="$(basename "$f" | grep -oP '^\d+' || echo 0)"
+    if (( num > max )); then
+      max=$num
+    fi
+  done
+  printf "%03d" $((max + 1))
+}
+
+# --- Phase 1: Llama generates rough drafts on charlie ---
+generate_rough_draft() {
+  local findings="$1"
+  local style_guide="$2"
+  local existing="$3"
+  local target_section="${4:-}"
+
+  local section_instruction=""
+  if [[ -n "$target_section" ]]; then
+    section_instruction="Write the episode for section: $target_section. Focus on the themes and principles relevant to that section."
+  else
+    section_instruction="Choose the most appropriate section based on the primary theme of the episode."
+  fi
+
+  local prompt="You are an OUTLINER for 'Days of Your Life' -- a book of autobiographical short stories.
+
+Your job is to create a STRUCTURED OUTLINE, not write the episode. A different model (Claude) will write the actual prose from your outline.
+
+FINDINGS FROM TODAY'S DEEP-DREAM RUN:
+$findings
+
+EXISTING EPISODES (do NOT repeat these topics):
+$existing
+
+$section_instruction
+
+YOUR TASK:
+Create a detailed outline for ONE new episode based on the most compelling finding that hasn't been covered.
+
+OUTPUT FORMAT (strict JSON):
+{
+  \"title\": \"Episode title\",
+  \"section\": \"i-the-numbers or ii-the-machine or iii-the-operation etc\",
+  \"opening_scene\": \"What actually happened -- the real event, with real details from the findings. 2-3 sentences.\",
+  \"cs_principle\": {
+    \"name\": \"e.g. dangling pointer\",
+    \"connection\": \"How the real event demonstrates this principle. Be specific.\",
+    \"depth\": \"One level deeper -- what theory or system design pattern underlies this?\"
+  },
+  \"business_principle\": {
+    \"name\": \"e.g. institutional knowledge loss\",
+    \"connection\": \"How this maps to business operations.\",
+    \"depth\": \"Industry example or framework.\"
+  },
+  \"math_principle\": {
+    \"name\": \"e.g. graph connectivity\",
+    \"connection\": \"The mathematical model underneath.\",
+    \"depth\": \"Formal definition or formula.\"
+  },
+  \"arc\": \"How the episode flows: what happened -> what broke -> what the principle is -> what was learned. 3-4 sentences.\",
+  \"closing_line\": \"The last line of the episode. Make it land.\",
+  \"key_facts\": [\"List of specific facts/numbers/dates from the findings to include -- these MUST be real, not invented\"]
+}
+
+CRITICAL RULES:
+- ONLY use facts from the findings. Do NOT invent people, events, dates, or scenarios.
+- The person is Drew Beyersdorf, operations manager at Methodology (meal delivery).
+- Real team: Stephen Liu (COO/Chef), Julie Nguyen (CEO), Michael Phan (Head Chef), Bridget Daugherty (sourcing/menu).
+- Do NOT invent characters. Do NOT fabricate events.
+- Output valid JSON only. Nothing else."
+
+  # Send to Ollama on charlie via API
+  # Build JSON payload locally, scp to charlie, curl from there
+  local tmpfile
+  tmpfile="$(mktemp /tmp/chronicle-prompt-XXXXXX.txt)"
+  echo "$prompt" > "$tmpfile"
+
+  echo "[$(date +%H:%M:%S)] Sending to Llama on $CHARLIE ($OLLAMA_MODEL)..." >&2
+
+  # Build the JSON request body safely with python
+  local jsonfile
+  jsonfile="$(mktemp /tmp/chronicle-request-XXXXXX.json)"
+  python3 << PYEOF > "$jsonfile"
+import json
+prompt_text = open('$tmpfile').read()
+request = {
+    "model": "$OLLAMA_MODEL",
+    "prompt": prompt_text,
+    "stream": False,
+    "options": {
+        "temperature": 0.7,
+        "num_predict": 4096
+    }
+}
+print(json.dumps(request))
+PYEOF
+
+  # Copy request to charlie and curl locally there
+  local remote_json="/tmp/chronicle-request-$$.json"
+  scp -q "$jsonfile" "$CHARLIE:$remote_json" 2>/dev/null
+
+  local response
+  response="$(ssh "$CHARLIE" "curl -s http://localhost:11434/api/generate -d @$remote_json && rm -f $remote_json" 2>/dev/null)" || {
+    echo "ERROR: Ollama API call failed" >&2
+    rm -f "$tmpfile" "$jsonfile"
+    return 1
+  }
+
+  rm -f "$tmpfile" "$jsonfile"
+
+  # Extract response text
+  echo "$response" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('response',''))" 2>/dev/null
+}
+
+# --- Phase 2: Claude refines the draft ---
+refine_with_claude() {
+  local rough_draft="$1"
+  local style_guide="$2"
+  local existing="$3"
+
+  local prompt="You are writing an episode of 'Days of Your Life' -- autobiographical short stories by Drew Beyersdorf, operations manager at Methodology (premium meal delivery in LA).
+
+STYLE GUIDE:
+$style_guide
+
+EXISTING EPISODES (match this voice and quality exactly):
+$existing
+
+EPISODE OUTLINE (from research phase -- all facts here are verified):
+$rough_draft
+
+YOUR TASK:
+Write the full episode from this outline. 500-2000 words.
+
+VOICE:
+- First person as Drew. Casual, direct. Like telling a friend what happened at work.
+- No corporate language. No jargon without explaining it.
+- The lesson emerges from the story. No headers like 'Computer Science --' or 'The Principle:'.
+- Weave the CS/business/math principles into the narrative naturally.
+- Ground everything in what actually happened -- the outline's key_facts are real.
+
+FORMAT:
+- Start with: # Title
+- Then: *Date. Place.*
+- End with: *Episode NNN. Section X: Title. Principles: list.*
+- Use hyphens, not em dashes.
+- No emojis.
+
+Output only the episode. Nothing else -- no preamble, no commentary."
+
+  echo "[$(date +%H:%M:%S)] Sending to Claude ($CLAUDE_MODEL) for refinement..." >&2
+
+  local tmpfile
+  tmpfile="$(mktemp /tmp/chronicle-refine-XXXXXX.txt)"
+  echo "$prompt" > "$tmpfile"
+
+  local response
+  response="$(claude --print --model "$CLAUDE_MODEL" < "$tmpfile" 2>/dev/null)" || {
+    echo "ERROR: Claude CLI call failed" >&2
+    rm -f "$tmpfile"
+    return 1
+  }
+
+  rm -f "$tmpfile"
+  echo "$response"
+}
+
+# --- Main Pipeline ---
+
+if [[ "$CLAUDE_ONLY" == true ]]; then
+  # Refine an existing draft
+  echo "[$(date +%H:%M:%S)] Refine-only mode. Reading draft..."
+  rough_draft="$(cat "$DRAFT_FILE")"
+  style_guide="$(load_style_guide)"
+  existing="$(load_existing_episodes)"
+
+  refined="$(refine_with_claude "$rough_draft" "$style_guide" "$existing")"
+
+  local outfile="${DRAFT_FILE%.md}-refined.md"
+  echo "$refined" > "$outfile"
+  echo "[$(date +%H:%M:%S)] Refined draft saved to: $outfile"
+  exit 0
+fi
+
+# Load context
+echo "[$(date +%H:%M:%S)] Loading context..."
+findings="$(cat "$FINDINGS_FILE")"
+style_guide="$(load_style_guide)"
+existing="$(load_existing_episodes "$SECTION")"
+
+if [[ "$DRY_RUN" == true ]]; then
+  echo "[$(date +%H:%M:%S)] DRY RUN -- would generate episode from:"
+  echo "  Findings: $(wc -l < "$FINDINGS_FILE") lines"
+  echo "  Style guide: $(echo "$style_guide" | wc -l) lines"
+  echo "  Existing episodes: $(echo "$existing" | wc -l) lines"
+  echo "  Target section: ${SECTION:-auto}"
+  exit 0
+fi
+
+# Phase 1: Llama rough draft
+echo ""
+echo "  --- Phase 1: Llama Rough Draft ---"
+echo ""
+rough_draft="$(generate_rough_draft "$findings" "$style_guide" "$existing" "$SECTION")"
+
+if [[ -z "$rough_draft" ]]; then
+  echo "ERROR: Llama returned empty draft" >&2
+  exit 1
+fi
+
+# Save rough draft
+draft_file="$(mktemp "$CHRONICLES_DIR/.draft-XXXXXX.md")"
+echo "$rough_draft" > "$draft_file"
+echo "[$(date +%H:%M:%S)] Rough draft saved: $draft_file"
+echo "[$(date +%H:%M:%S)] Draft length: $(echo "$rough_draft" | wc -w) words"
+
+if [[ "$LLAMA_ONLY" == true ]]; then
+  echo ""
+  echo "  Llama-only mode. Draft at: $draft_file"
+  echo "  To refine: chronicle-writer --claude-only $draft_file"
+  exit 0
+fi
+
+# Phase 2: Claude refinement
+echo ""
+echo "  --- Phase 2: Claude Refinement ---"
+echo ""
+refined="$(refine_with_claude "$rough_draft" "$style_guide" "$existing")"
+
+if [[ -z "$refined" ]]; then
+  echo "WARNING: Claude returned empty refinement. Keeping rough draft." >&2
+  refined="$rough_draft"
+fi
+
+# Determine section and episode number
+# Try to extract section from the episode footer
+detected_section="$(echo "$refined" | grep -oP 'Section [IVX]+: ' | head -1 | sed 's/Section //;s/: //' || true)"
+if [[ -n "$SECTION" ]]; then
+  target_section="$SECTION"
+elif [[ -n "$detected_section" ]]; then
+  # Map roman numeral to directory name
+  case "$detected_section" in
+    I) target_section="i-the-numbers" ;;
+    II) target_section="ii-the-machine" ;;
+    III) target_section="iii-the-operation" ;;
+    IV) target_section="iv-the-market" ;;
+    V) target_section="v-the-people" ;;
+    VI) target_section="vi-the-money" ;;
+    VII) target_section="vii-the-law" ;;
+    VIII) target_section="viii-the-build" ;;
+    IX) target_section="ix-the-self" ;;
+    *) target_section="uncategorized" ;;
+  esac
+else
+  target_section="uncategorized"
+fi
+
+ep_num="$(next_episode_number "$target_section")"
+
+# Extract title from first heading
+title="$(echo "$refined" | grep -m1 '^# ' | sed 's/^# //' | tr '[:upper:]' '[:lower:]' | sed 's/ /-/g;s/[^a-z0-9-]//g')"
+[[ -z "$title" ]] && title="untitled"
+
+outfile="$CHRONICLES_DIR/$target_section/${ep_num}-${title}.md"
+mkdir -p "$(dirname "$outfile")"
+echo "$refined" > "$outfile"
+
+# Clean up draft
+rm -f "$draft_file"
+
+echo ""
+echo "  ======================================"
+echo "  Episode written!"
+echo "  ======================================"
+echo "  File: $outfile"
+echo "  Section: $target_section"
+echo "  Episode: $ep_num"
+echo "  Words: $(echo "$refined" | wc -w)"
+echo "  ======================================"
+echo ""
+echo "  Rough draft (Llama) -> Claude refinement -> saved."
+echo "  Review the episode, then commit when satisfied."
+echo ""
