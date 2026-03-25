@@ -30,7 +30,7 @@ Path: `{{MEMORY_DIR}}`
 
 ### 1. Summary vs Canonical Source Drift
 
-Many memory files are "pointer files" -- thin summaries that reference a canonical source in `~/vault/methodology-kb/`. For each pointer file:
+Many memory files are "pointer files" -- thin summaries that reference a canonical source elsewhere on disk. For each pointer file:
 
 - Read the memory file's summary/claims
 - Read the canonical source content
@@ -52,7 +52,7 @@ For each memory file with `type: project`:
 ### 3. Cross-Memory Contradiction Detection
 
 Scan all memory files for factual claims that contradict each other. Examples:
-- File A says "Sysco is a vendor" but File B says "Sysco is NOT a confirmed vendor"
+- File A says "Acme is a vendor" but File B says "Acme is NOT a confirmed vendor"
 - File A says subscriber count is 2,200 but File B says 1,800
 - File A says a person holds title X but File B says they hold title Y
 - File A says a project is "parked" but File B describes it as "active"
@@ -64,7 +64,7 @@ Flag each contradiction with both files referenced.
 Check for memories that reference future dates that are now in the past:
 - "Targeting Q2 2026 launch" -- is that still accurate given today's date?
 - "Deadline: March 15" -- that's passed, is the memory still relevant?
-- "Next: Owen review" -- has this happened based on git activity?
+- "Next: team review" -- has this happened based on git activity?
 
 Flag temporal issues as info severity.
 
@@ -79,8 +79,8 @@ Return a JSON object with this exact structure:
   "actions": [
     {
       "action": "flag",
-      "file": "courier-command-center.md",
-      "description": "Memory says 'Owen review pending' but project has 15 commits in the last 2 weeks. Status may be outdated.",
+      "file": "fleet-tracker.md",
+      "description": "Memory says 'team review pending' but project has 15 commits in the last 2 weeks. Status may be outdated.",
       "severity": "info"
     },
     {

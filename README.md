@@ -69,36 +69,36 @@ $ deep-dream
 
 [03:00:12] Starting phase 1...
 [03:00:12] Assembling context...
-[03:00:14] Prompt assembled (387KB). Calling Claude (sonnet)...
-[03:12:41] Claude returned 17 actions.
-  FIXED labor.md: convert "last Thursday" to "2026-03-20"
-  FIXED infrastructure.md: remove dead path ~/projects/workforce-scheduling/
-  FIXED team.md: update Saeloun cost from $20K to $12K (transition in progress)
-  FLAG [warning] competitive.md: Locale status may be outdated (last updated 2026-03-01)
+[03:00:14] Prompt assembled (195KB). Calling Claude (sonnet)...
+[03:08:41] Claude returned 12 actions.
+  FIXED api-migration.md: convert "last Thursday" to "2026-03-20"
+  FIXED infrastructure.md: remove dead path ~/projects/old-auth-service/
+  FIXED vendors.md: update contract value from "$20K" to "$12K" (renegotiated)
+  FLAG [warning] competitors.md: market analysis last updated 2026-03-01 (24 days stale)
   ...
 
-[03:12:42] Phase 1 summary: 17 fixes, 3 flags.
-[03:12:42] Git commit: phase 1 changes committed.
+[03:08:42] Phase 1 summary: 12 findings across 47 files. 10 fixes, 2 flags.
+[03:08:42] Git commit: phase 1 changes committed.
 
 === Phase 2: Structural Integrity ===
 
-[03:12:43] Starting phase 2...
-  FIXED MEMORY.md: add missing pointer for ops-kpi.md
-  FLAG [error] product.md: canonical source ~/vault/methodology-kb/product-menu.md has diverged
+[03:08:43] Starting phase 2...
+  FIXED MEMORY.md: add missing pointer for metrics.md
+  FLAG [error] architecture.md: canonical source ~/docs/architecture.md has diverged
   ...
 
 === Phase 3: Semantic Verification ===
 
-[03:24:01] Starting phase 3...
-  FLAG [warning] labor.md: claims 14.9% but QuickBooks shows 15.2% as of last sync
-  FLAG [info] strategy.md: displacement thesis section hasn't been updated in 3 weeks
+[03:18:01] Starting phase 3...
+  FLAG [warning] metrics.md: claims "conversion at 3.2%" but dashboard shows 2.8%
+  FLAG [info] strategy.md: growth plan section references Q1 but Q1 ended 3 weeks ago
   ...
 
   =========================================
   Deep Dream Complete
   =========================================
-  Fixes applied: 42
-  Items flagged: 11
+  Fixes applied: 14
+  Items flagged: 10
   Journal: memory-backups/dream-journal-2026-03-25.md
   =========================================
 ```

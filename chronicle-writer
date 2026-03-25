@@ -195,8 +195,7 @@ OUTPUT FORMAT (strict JSON):
 
 CRITICAL RULES:
 - ONLY use facts from the findings. Do NOT invent people, events, dates, or scenarios.
-- The person is Drew Beyersdorf, operations manager at Methodology (meal delivery).
-- Real team: Stephen Liu (COO/Chef), Julie Nguyen (CEO), Michael Phan (Head Chef), Bridget Daugherty (sourcing/menu).
+- Write about the person whose memory files these are. Use details from the findings only.
 - Do NOT invent characters. Do NOT fabricate events.
 - Output valid JSON only. Nothing else."
 
@@ -264,7 +263,7 @@ YOUR TASK:
 Write the full episode from this outline. 500-2000 words.
 
 VOICE:
-- First person as Drew. Casual, direct. Like telling a friend what happened at work.
+- First person. Casual, direct. Like telling a friend what happened at work.
 - No corporate language. No jargon without explaining it.
 - The lesson emerges from the story. No headers like 'Computer Science --' or 'The Principle:'.
 - Weave the CS/business/math principles into the narrative naturally.

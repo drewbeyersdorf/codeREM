@@ -42,7 +42,7 @@ For every .md file in the memory directory (excluding MEMORY.md itself):
 
 Many memory files contain "canonical source" pointers like:
 ```
-> Canonical source: `~/vault/methodology-kb/product-menu.md`
+> Canonical source: `~/docs/product-roadmap.md`
 ```
 
 For each such pointer:
@@ -59,7 +59,7 @@ For each memory file with frontmatter:
   - Files starting with `feedback_` -> type: feedback
   - Files starting with `principle_` -> type: reference
   - Files about active work/projects -> type: project
-  - Files about Drew personally -> type: user
+  - Files about the user personally -> type: user
 
 ### 4. Thematic Overlap Detection
 
@@ -89,7 +89,7 @@ Return a JSON object with this exact structure:
     {
       "action": "flag",
       "file": "product.md",
-      "description": "Vault pointer ~/vault/methodology-kb/product-menu.md does not exist",
+      "description": "Vault pointer ~/docs/product-roadmap.md does not exist",
       "severity": "warning"
     }
   ],
