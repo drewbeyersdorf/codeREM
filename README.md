@@ -1,4 +1,6 @@
-# codeREM
+<p align="center">
+  <img src="docs/logo.svg" alt="codeREM" width="700" />
+</p>
 
 **Your AI agent's memory decays every day. Dead links, stale facts, broken references. codeREM consolidates it while you sleep.**
 
